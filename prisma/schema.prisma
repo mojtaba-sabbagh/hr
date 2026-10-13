@@ -1,0 +1,415 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  SUBSYSTEM_ADMIN
+  USER
+}
+
+model Subsystem {
+  id          String          @id @default(cuid())
+  key         String          @unique
+  title       String
+  description String?
+  enabled     Boolean         @default(true)
+  sortOrder   Int             @default(0)
+  dependencies Json?
+  memberships UserSubsystem[]
+  adminScopes SubsystemAdminScope[]
+  groups      Group[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model User {
+  id                  String          @id @default(cuid())
+  email               String          @unique
+  name                String
+  passwordHash        String
+  role                UserRole        @default(USER)
+  active              Boolean         @default(true)
+  subsystemMemberships UserSubsystem[]
+  adminScopes         SubsystemAdminScope[]
+  groupMemberships    UserGroup[]
+  hrProfile           HrEmployee?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+}
+
+model UserSubsystem {
+  userId      String
+  subsystemId String
+  enabled     Boolean   @default(true)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subsystem   Subsystem @relation(fields: [subsystemId], references: [id], onDelete: Cascade)
+  @@id([userId, subsystemId])
+}
+
+model SubsystemAdminScope {
+  userId      String
+  subsystemId String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subsystem   Subsystem @relation(fields: [subsystemId], references: [id], onDelete: Cascade)
+  @@id([userId, subsystemId])
+}
+
+model Group {
+  id          String           @id @default(cuid())
+  name        String
+  subsystemId String?
+  subsystem   Subsystem?       @relation(fields: [subsystemId], references: [id], onDelete: Cascade)
+  members     UserGroup[]
+  permissions GroupPermission[]
+  createdAt   DateTime         @default(now())
+  @@unique([name, subsystemId])
+}
+
+model UserGroup {
+  userId  String
+  groupId String
+  user    User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  @@id([userId, groupId])
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  title       String
+  groups      GroupPermission[]
+}
+
+model GroupPermission {
+  groupId      String
+  permissionId String
+  group        Group      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  @@id([groupId, permissionId])
+}
+
+enum CoreRequestKind {
+  GENERAL
+  ACCESS
+  SERVICE
+  IDEA
+}
+
+enum CoreRequestStatus {
+  OPEN
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model CoreRequest {
+  id           String            @id @default(cuid())
+  number       Int               @unique @default(autoincrement())
+  kind         CoreRequestKind
+  title        String
+  description  String
+  priority     String            @default("NORMAL")
+  status       CoreRequestStatus @default(OPEN)
+  ownerId      String
+  ownerName    String
+  response     String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  events       CoreRequestEvent[]
+  votes        CoreIdeaVote[]
+
+  @@index([ownerId, createdAt])
+  @@index([kind, status, createdAt])
+}
+
+model CoreRequestEvent {
+  id           String            @id @default(cuid())
+  requestId    String
+  request      CoreRequest       @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  actorId      String
+  actorName    String
+  status       CoreRequestStatus
+  note         String?
+  createdAt    DateTime          @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+model CoreNotification {
+  id           String   @id @default(cuid())
+  recipientId  String
+  title        String
+  body         String
+  requestId    String?
+  readAt       DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([recipientId, readAt, createdAt])
+}
+
+model CoreAnnouncement {
+  id           String   @id @default(cuid())
+  title        String
+  body         String
+  authorId     String
+  authorName   String
+  important    Boolean  @default(false)
+  archivedAt   DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([archivedAt, createdAt])
+}
+
+model CoreIdeaVote {
+  requestId    String
+  userId       String
+  request      CoreRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+
+  @@id([requestId, userId])
+}
+
+model HrEmployee {
+  id            String   @id @default(cuid())
+  personnelCode String   @unique
+  name          String
+  userId        String?  @unique
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  department    String
+  jobTitle      String
+  worksite      String
+  managerId     String?
+  manager       HrEmployee? @relation("HrTeam", fields: [managerId], references: [id], onDelete: SetNull)
+  team          HrEmployee[] @relation("HrTeam")
+  startDate     DateTime @db.Date
+  contractType  String   @default("FULL_TIME")
+  phone         String   @default("")
+  education     String   @default("")
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  requests      HrRequest[]
+  attendance    HrAttendance[]
+  shifts        HrShift[]
+  evaluations   HrEvaluation[]
+  transfers     HrTransfer[]
+  responses     HrSurveyResponse[]
+  feedback      HrFeedback[]
+  acknowledgements HrAcknowledgement[]
+  @@index([managerId, active])
+  @@index([department, active])
+}
+
+model HrRequest {
+  id          String   @id @default(cuid())
+  number      Int      @unique @default(autoincrement())
+  employeeId  String
+  employee    HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  kind        String
+  startDate   DateTime @db.Date
+  endDate     DateTime @db.Date
+  minutes     Int?
+  description String
+  status      String   @default("PENDING")
+  response    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  events      HrRequestEvent[]
+  @@index([employeeId, status, createdAt])
+}
+
+model HrRequestEvent {
+  id          String @id @default(cuid())
+  requestId   String
+  request     HrRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  actorId     String
+  actorName   String
+  status      String
+  note        String?
+  createdAt   DateTime @default(now())
+  @@index([requestId, createdAt])
+}
+
+model HrAttendance {
+  id           String @id @default(cuid())
+  employeeId   String
+  employee     HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  workDate     DateTime @db.Date
+  status       String
+  clockIn      String?
+  clockOut     String?
+  endNextDay   Boolean @default(false)
+  breakMinutes Int @default(0)
+  workedMinutes Int @default(0)
+  note         String @default("")
+  recordedBy   String
+  updatedAt    DateTime @updatedAt
+  @@unique([employeeId, workDate])
+}
+
+model HrShift {
+  id          String @id @default(cuid())
+  employeeId  String
+  employee    HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  workDate    DateTime @db.Date
+  kind        String
+  startTime   String?
+  endTime     String?
+  endNextDay  Boolean @default(false)
+  note        String @default("")
+  published   Boolean @default(false)
+  updatedAt   DateTime @updatedAt
+  @@unique([employeeId, workDate])
+}
+
+model HrEvaluation {
+  id              String @id @default(cuid())
+  employeeId      String
+  employee        HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  period          String
+  scores          Json
+  summary         String
+  developmentPlan String @default("")
+  status          String @default("DRAFT")
+  authorId        String
+  authorName      String
+  publishedBy     String?
+  publishedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@unique([employeeId, period])
+}
+
+model HrJob {
+  id          String @id @default(cuid())
+  title       String
+  department  String
+  worksite    String
+  description String
+  openings    Int @default(1)
+  status      String @default("OPEN")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  candidates  HrCandidate[]
+}
+
+model HrCandidate {
+  id              String @id @default(cuid())
+  jobId           String
+  job             HrJob @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  name            String
+  email           String
+  phone           String @default("")
+  education       String @default("")
+  experienceYears Int @default(0)
+  notes           String @default("")
+  stage           String @default("APPLIED")
+  decisionNote    String?
+  decidedBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@unique([jobId, email])
+}
+
+model HrTransfer {
+  id             String @id @default(cuid())
+  employeeId     String
+  employee       HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  fromDepartment String
+  fromJobTitle   String
+  fromWorksite   String
+  toDepartment   String
+  toJobTitle     String
+  toWorksite     String
+  effectiveDate  DateTime @db.Date
+  reason         String
+  status         String @default("PENDING")
+  proposedBy     String
+  proposedByName String
+  decisionNote   String?
+  decidedBy      String?
+  appliedAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  @@index([employeeId, status])
+}
+
+model HrSurvey {
+  id          String @id @default(cuid())
+  title       String
+  description String
+  questions   Json
+  department  String?
+  status      String @default("DRAFT")
+  dueDate     DateTime? @db.Date
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  responses   HrSurveyResponse[]
+}
+
+model HrSurveyResponse {
+  id          String @id @default(cuid())
+  surveyId    String
+  survey      HrSurvey @relation(fields: [surveyId], references: [id], onDelete: Restrict)
+  employeeId  String
+  employee    HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  answers     Json
+  submittedAt DateTime @default(now())
+  @@unique([surveyId, employeeId])
+}
+
+model HrFeedback {
+  id          String @id @default(cuid())
+  employeeId  String
+  employee    HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  kind        String
+  message     String
+  anonymous   Boolean @default(false)
+  status      String @default("NEW")
+  response    String?
+  respondedBy String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model HrRegulation {
+  id          String @id @default(cuid())
+  title       String
+  category    String
+  body        String
+  version     String
+  sourceUrl   String?
+  published   Boolean @default(false)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  acknowledgements HrAcknowledgement[]
+}
+
+model HrAcknowledgement {
+  regulationId String
+  regulation   HrRegulation @relation(fields: [regulationId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  readAt       DateTime @default(now())
+  @@id([regulationId, employeeId])
+}
+
+model HrNotification {
+  id          String @id @default(cuid())
+  recipientId String
+  title       String
+  body        String
+  view        String
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+  @@index([recipientId, readAt, createdAt])
+}

@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Next.js build output
+.next/
+.next-dev/
+out/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# TypeScript incremental build data
+*.tsbuildinfo
+
+# Test and coverage output
+coverage/
+.nyc_output/
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+*.seed
+
+# Local databases and generated artifacts
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Generated/static exports and temporary files
+*.html
+*.tmp
+*.temp
+tmp/
+temp/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor and IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Vercel
+.vercel/
+
+# Prisma local/generated cache
+.prisma/
