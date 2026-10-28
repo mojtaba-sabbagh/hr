@@ -64,3 +64,23 @@
 @media(prefers-reduced-motion:reduce){.wf-form-card:hover{transform:none}}
 .wf-custom-parameters{margin-top:28px;border-top:1px solid var(--line);padding-top:25px}.wf-custom-parameters h3{font-size:1.125rem;font-weight:700;margin-bottom:10px}.wf-custom-parameter{display:grid;grid-template-columns:2fr 2fr 1fr 1fr auto;gap:9px;margin:15px 0}.wf-custom-parameter input{min-width:0;border:1px solid var(--line);border-radius:7px;padding:10px;background:white;font-size:1rem}@media(max-width:700px){.wf-custom-parameter{grid-template-columns:1fr 1fr}}
 .wf-reassign{margin-top:12px;font-size:0.875rem;color:var(--deep)}.wf-reassign summary{cursor:pointer}.wf-reassign .wf-field{font-size:0.875rem;margin-top:12px}.wf-reassign button{margin-top:10px;font-size:1rem}
+.wf-org-scroll{max-width:100%;min-width:0;overflow-x:auto;overflow-y:hidden;padding-bottom:2px}
+.wf-admin{min-width:0;max-width:100%}
+.wf-org-tree{display:grid;grid-template-columns:minmax(0,1fr);gap:9px;min-width:0}
+.wf-org-node{background:white;border:1px solid var(--line);border-right:3px solid #76a46f;border-radius:9px;padding:7px 10px;min-width:0;max-width:100%}
+.wf-org-node>header{display:flex;justify-content:space-between;align-items:center;gap:8px;min-width:0}
+.wf-org-head{display:flex;align-items:baseline;gap:7px;min-width:0;flex:1}
+.wf-org-node h3{font-size:0.9375rem;font-weight:700;line-height:1.6;overflow-wrap:anywhere;min-width:0}
+.wf-org-code{font-size:0.75rem;color:var(--ink3);direction:ltr;flex-shrink:0}
+.wf-org-node .badge{font-size:0.75rem;padding:1px 6px;flex-shrink:0}
+.wf-org-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:3px;min-width:0}
+.wf-org-meta{font-size:0.8125rem;color:var(--ink3);line-height:1.7;min-width:0}
+.wf-org-holders{display:inline-flex;flex-wrap:wrap;gap:4px;min-width:0}
+.wf-org-holder{display:inline-flex;align-items:baseline;gap:5px;background:var(--tint);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:0.875rem;line-height:1.7;min-width:0;max-width:100%;overflow-wrap:anywhere}
+.wf-org-holder small{font-size:0.6875rem;color:var(--ink3)}
+.wf-org-holder.secondary{background:#f3f6f9;border-style:dashed}
+.wf-org-holder.vacant{background:#fff8df;border-color:#ebe3ca;color:#8a6d1f}
+.wf-org-children{margin-top:6px;padding-right:12px;border-right:2px solid #dbe6d6;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0}
+/* Deep chains stop indenting further so the card stays readable on narrow screens. */
+.wf-org-children .wf-org-children .wf-org-children .wf-org-children{padding-right:6px;border-right-width:1px}
+@media(max-width:700px){.wf-org-node{padding:6px 8px}.wf-org-children{padding-right:7px}.wf-org-holder{font-size:0.8125rem}.wf-org-meta{font-size:0.75rem}}

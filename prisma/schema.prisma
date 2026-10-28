@@ -495,8 +495,106 @@ model Company {
   instances   WorkflowInstance[]
   notices     WorkflowNotice[]
   audits      CompanyAudit[]
+  departments Department[]
+  positions   Position[]
+  positionAssignments PositionAssignment[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// Organizational unit (واحد سازمانی). Company-scoped, so each tenant keeps its own chart.
+model Department {
+  id          String       @id @default(cuid())
+  companyId   String
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name        String
+  code        String // e.g. "ENG", "HR", "FIN"
+  description String?
+  isActive    Boolean      @default(true)
+
+  parentId    String?
+  parent      Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Department[] @relation("DepartmentHierarchy")
+
+  positions   Position[]
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([companyId, code])
+  @@index([companyId, parentId])
+}
+
+enum PositionStatus {
+  ACTIVE
+  FROZEN
+  DISCONTINUED
+}
+
+// Job slot (پست سازمانی). Reporting lines connect positions, never people, so a
+// vacancy or transfer does not break the chart.
+model Position {
+  id                  String               @id @default(cuid())
+  companyId           String
+  company             Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  code                String // e.g. "POS-ENG-001"
+  title               String // e.g. "Lead Frontend Engineer"
+  description         String?
+  jobLevel            Int? // 1 (junior) … 8 (VP)
+  status              PositionStatus       @default(ACTIVE)
+
+  departmentId        String
+  department          Department           @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  reportsToPositionId String?
+  reportsTo           Position?            @relation("PositionReportingHierarchy", fields: [reportsToPositionId], references: [id], onDelete: SetNull)
+  directReports       Position[]           @relation("PositionReportingHierarchy")
+
+  defaultRoleId       String?
+  defaultRole         CompanyRole?         @relation(fields: [defaultRoleId], references: [id], onDelete: SetNull)
+
+  assignments         PositionAssignment[]
+
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@unique([companyId, code])
+  @@index([companyId, departmentId])
+  @@index([companyId, reportsToPositionId])
+}
+
+enum AssignmentType {
+  PERMANENT
+  TEMPORARY
+  ACTING // سرپرست / کفیل
+  CONTRACT
+}
+
+// Placement of a member in a position (انتساب). Effective dates preserve tenure
+// history; only active primary assignments drive approval routing.
+model PositionAssignment {
+  id             String         @id @default(cuid())
+  companyId      String
+  company        Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  memberId       String
+  member         CompanyMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  positionId     String
+  position       Position       @relation(fields: [positionId], references: [id], onDelete: Cascade)
+
+  assignmentType AssignmentType @default(PERMANENT)
+  isPrimary      Boolean        @default(true)
+
+  startDate      DateTime       @default(now())
+  endDate        DateTime?
+  isActive       Boolean        @default(true)
+
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([companyId, memberId, isActive, isPrimary])
+  @@index([companyId, positionId, isActive])
 }
 
 model CompanyMember {
@@ -506,8 +604,11 @@ model CompanyMember {
   userId    String
   user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
   active    Boolean @default(true)
+  // Cached direct manager, derived from the member's primary position.
+  // Retained so worker code and older records keep resolving during migration.
   managerId String?
   roles     CompanyMemberRole[]
+  positionAssignments PositionAssignment[]
   createdAt DateTime @default(now())
   @@unique([companyId, userId])
   @@index([companyId, active])
@@ -520,6 +621,7 @@ model CompanyRole {
   name        String
   permissions Json
   members     CompanyMemberRole[]
+  positions   Position[]
   createdAt   DateTime @default(now())
   @@unique([companyId, name])
 }

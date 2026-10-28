@@ -5,6 +5,7 @@ import { Prisma, type WorkflowInstance } from "@prisma/client";
 import { prisma } from "../prisma";
 import { AccessError, bodyObject, textField } from "../access-policy";
 import { canSubmit, companyAccess, managedEntryScope, json, serial, type Tx } from "../company-service";
+import { OrgHierarchyService } from "../org-chart";
 import type { SessionUser } from "../session-types";
 import { matches, validatePayload } from "./validation";
 import type { AssigneeDef, CompanySettings, FormPayload, FormSchema, WorkflowDefConfig, WorkflowNode } from "./types";
@@ -26,10 +27,17 @@ async function resolveAssignees(tx: Tx, defs: AssigneeDef[], instance: WorkflowI
       members.forEach(m => ids.add(m.userId));
     }
     if (def.strategy === "manager") {
-      const submitter = await tx.companyMember.findUnique({where: {companyId_userId: {companyId: instance.companyId, userId: instance.submittedBy}}});
-      if (submitter?.managerId) {
-        const manager = await tx.companyMember.findFirst({where: {id: submitter.managerId, companyId: instance.companyId, active: true}, select: {userId: true}});
-        if (manager) ids.add(manager.userId);
+      // Reporting line first: the holder of the parent position. Companies that
+      // have not built a chart yet keep the legacy member-to-member pointer.
+      const hierarchy = new OrgHierarchyService(tx);
+      const direct = await hierarchy.getDirectManager(instance.companyId, instance.submittedBy);
+      if (direct) ids.add(direct.userId);
+      else {
+        const submitter = await tx.companyMember.findUnique({where: {companyId_userId: {companyId: instance.companyId, userId: instance.submittedBy}}});
+        if (submitter?.managerId) {
+          const manager = await tx.companyMember.findFirst({where: {id: submitter.managerId, companyId: instance.companyId, active: true}, select: {userId: true}});
+          if (manager) ids.add(manager.userId);
+        }
       }
     }
     if (def.strategy === "prev_actor") {

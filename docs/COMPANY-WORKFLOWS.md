@@ -24,7 +24,7 @@ The materials update adds a public landing page, a company workspace, a company 
 6. In **فرم‌ساز و گردش‌کار**, edit the fields, submission roles and workflow. Save drafts, then publish a version. Published versions remain immutable.
 7. Members can now submit the published form from **ثبت درخواست**. The assigned person receives an inbox task and an internal notice.
 
-The **manager** assignment strategy uses the submitter's company-specific manager. Template supervisor stages use this strategy. Other template stages use company business roles. An approval cannot be assigned to the submitter; no administrator approval bypass exists. A company must have at least one eligible assignee at every activated human step. Missing assignments roll back the transition instead of silently skipping it.
+The **manager** assignment strategy resolves through the organizational chart (see [ORG-CHART.md](ORG-CHART.md)): the holder of the submitter's parent position, falling back to the legacy `CompanyMember.managerId` chain for companies without positions. Template supervisor stages use this strategy. Other template stages use company business roles. An approval cannot be assigned to the submitter; no administrator approval bypass exists. A company must have at least one eligible assignee at every activated human step, including a vacant position on the approval line. Missing assignments roll back the transition instead of silently skipping it.
 
 ## Forms
 
@@ -84,7 +84,7 @@ The templates implement request capture, review and tracking. Completing a purch
 
 ## Database and verification
 
-`20261027090000_company_workflow_builder` adds company, membership, business-role, form, definition/version, instance/task/action, notification and audit tables. It does not update or delete existing business rows.
+`20261027090000_company_workflow_builder` adds company, membership, business-role, form, definition/version, instance/task/action, notification and audit tables. It does not update or delete existing business rows. `20261028120000_org_chart` adds company-scoped departments, positions and placements; run `npm run backfill:org` afterwards to derive positions from existing `managerId` chains.
 
 The updated `.env` was verified against `hrdb`. The stale `DATABASE_URL` override was removed from `.env.local` so Next.js and Prisma use the same connection; all other local settings were retained. Restart an already-running application process after environment changes.
 
@@ -96,6 +96,7 @@ Checks:
 npm run typecheck
 npm run test:workflow:unit
 npm run test:workflow
+npm run test:org
 npm run test:access
 npm run build
 ```

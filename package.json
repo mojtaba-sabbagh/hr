@@ -13,7 +13,11 @@
     "test:workflow": "node --test tests/workflow.test.cjs",
     "typecheck": "tsc --noEmit",
     "seed:prototype": "ts-node --project prisma/tsconfig.seed.json prisma/seed-prototype.ts",
-    "test:prototype": "node --test tests/prototype-access.test.cjs"
+    "backfill:org": "ts-node --project prisma/tsconfig.seed.json prisma/backfill-org-chart.ts",
+    "test:prototype": "node --test tests/prototype-access.test.cjs",
+    "test:org": "node --test tests/org-chart.test.cjs",
+    "generate": "prisma generate",
+    "postinstall": "prisma generate"
   },
   "prisma": {
     "seed": "ts-node --project prisma/tsconfig.seed.json prisma/seed.ts"
