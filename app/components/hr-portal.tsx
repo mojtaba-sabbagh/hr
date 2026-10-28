@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, ArrowRightLeft, ArrowUpLeft, BarChart3, Bell, Briefcase, CheckCheck, CheckCircle2, ClipboardList, Clock3, Download, FileText, Inbox, LayoutDashboard, Loader2, MessageSquare, Plus, Search, ScrollText, Star, Target, TrendingUp, UserPlus, UserRound, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, ArrowRightLeft, ArrowUpLeft, BarChart3, Bell, Briefcase, Building2, CheckCheck, CheckCircle2, ClipboardList, Clock3, Download, FileSignature, FileText, FolderOpen, Inbox, LayoutDashboard, Loader2, MessageSquare, Plus, Search, ScrollText, ShieldAlert, Stamp, Star, Target, TrendingUp, UserPlus, UserRound, Users, X, type LucideIcon } from "lucide-react";
 import AppShell, { type NavItem } from "./app-shell";
 import { hasPermission } from "@/app/lib/access-policy";
 import type { SessionUser } from "@/app/lib/session-types";
-import { ATTENDANCE_STATUS, CANDIDATE_STAGES, COMPETENCIES, CONTRACT_TYPES, FEATURE_CATEGORIES, FEEDBACK_KINDS, HR_REQUEST_KINDS, HR_REQUEST_STATUS, OKR_STATUS, PLAN_SCENARIOS, PLAN_STATUS, POTENTIAL_LEVELS, PROMOTION_STATUS, SHIFT_KINDS, featureItems, type FeatureCategory } from "@/app/lib/hr-types";
+import { ATTENDANCE_STATUS, CANDIDATE_STAGES, COMPETENCIES, CONTRACT_KINDS, CONTRACT_STATUS, CONTRACT_TYPES, DECREE_KINDS, DECREE_STATUS, DOCUMENT_STATUS, EMPLOYMENT_STATES, FEATURE_CATEGORIES, FEEDBACK_KINDS, FILE_DOCUMENTS, HR_REQUEST_KINDS, HR_REQUEST_STATUS, MILITARY_STATUS, OKR_STATUS, PLAN_SCENARIOS, PLAN_STATUS, POTENTIAL_LEVELS, PROMOTION_STATUS, SHIFT_KINDS, VETERAN_STATUS, featureItems, type FeatureCategory } from "@/app/lib/hr-types";
+
+const EXPIRY_LABELS: Record<string, string> = {expired: "منقضی", risk: "کمتر از ۱۵ روز", warn: "کمتر از ۴۵ روز", notice: "کمتر از ۶۰ روز", ok: "معتبر", none: "دائم"};
 
 type AnyData = Record<string, any>;
 type Row = Record<string, any>;
@@ -19,7 +21,7 @@ const nz = (value: unknown) => (typeof value === "number" ? value : 0);
 const str = (value: unknown) => (value == null ? "" : String(value));
 const opts = (map: Record<string, string>) => Object.entries(map).map(([value, label]) => ({value, label}));
 
-const TONES: Record<string, string> = {PENDING: "amber", APPROVED: "green", REJECTED: "red", CANCELLED: "gray", PRESENT: "green", ABSENT: "red", LEAVE: "blue", MISSION: "purple", REST: "gray", MORNING: "blue", EVENING: "amber", NIGHT: "purple", APPLIED: "gray", SCREENING: "blue", INTERVIEW: "amber", OFFERED: "purple", HIRED: "green", DRAFT: "gray", SUBMITTED: "amber", PUBLISHED: "green", CLOSED: "gray", OPEN: "blue", ACTIVE: "blue", DONE: "green", ARCHIVED: "gray", IN_REVIEW: "blue", ANSWERED: "green", high: "red", mid: "amber", low: "green"};
+const TONES: Record<string, string> = {PENDING: "amber", APPROVED: "green", REJECTED: "red", CANCELLED: "gray", PRESENT: "green", ABSENT: "red", LEAVE: "blue", MISSION: "purple", REST: "gray", MORNING: "blue", EVENING: "amber", NIGHT: "purple", APPLIED: "gray", SCREENING: "blue", INTERVIEW: "amber", OFFERED: "purple", HIRED: "green", DRAFT: "gray", SUBMITTED: "amber", PUBLISHED: "green", CLOSED: "gray", OPEN: "blue", ACTIVE: "blue", DONE: "green", ARCHIVED: "gray", IN_REVIEW: "blue", ANSWERED: "green", high: "red", mid: "amber", low: "green", TERMINATED: "gray", ENDED: "gray", ISSUED: "amber", NOTIFIED: "green", MISSING: "red", EXPIRED: "red", expired: "red", risk: "red", warn: "amber", notice: "blue", ok: "green", none: "gray"};
 
 async function api<T>(url: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, {method, cache: "no-store", signal, ...(body === undefined ? {} : {headers: {"content-type": "application/json"}, body: JSON.stringify(body)})});
@@ -46,7 +48,7 @@ function Dialog({heading, title, close, children, busy}: {heading: string; title
 }
 
 type Field = {name: string; label: string; type: "text" | "number" | "textarea" | "date" | "time" | "select" | "checkbox" | "employee" | "job" | "user" | "score"; options?: {value: string; label: string}[]; required?: boolean; min?: number; max?: number; placeholder?: string; checked?: boolean; value?: string; help?: string};
-type Ctx = {employees: {id: string; name: string}[]; jobs: {id: string; title: string}[]; users: {id: string; name: string}[]};
+type Ctx = {employees: {id: string; name: string}[]; jobs: {id: string; title: string}[]; users: {id: string; name: string}[]; contractors: {id: string; name: string}[]};
 type Spec = {label: string; title: string; endpoint: string; method: "POST" | "PATCH"; fields: Field[] | ((ctx: Ctx) => Field[]); toBody?: (values: Record<string, unknown>, row?: Row) => Record<string, unknown>; keys: string[]};
 type RowAction = {id: string; label: string; tone?: "primary" | "secondary" | "danger"; endpoint: (row: Row) => string; fields: Field[] | ((row: Row, ctx: Ctx) => Field[]); toBody: (values: Record<string, unknown>, row: Row) => Record<string, unknown>; show: (row: Row, can: (key: string) => boolean) => boolean};
 
@@ -66,6 +68,12 @@ const views: ViewDef[] = [
   {id: "team-requests", resource: "team-requests", title: "درخواست‌های تیم", subtitle: "بررسی درخواست‌های پرسنلی اعضای تیم", icon: ClipboardList, keys: ["hr:team-requests:view", "hr:team-requests:approve"], eyebrow: "تیم من"},
   {id: "team-reports", resource: "team-reports", title: "گزارش‌های تیم من", subtitle: "کارکرد و حضور اعضای تیم در بازه انتخابی", icon: BarChart3, keys: ["hr:team-reports:view", "hr:team-reports:export"], eyebrow: "تیم من"},
   {id: "people", resource: "people", title: "پرسنل و پروفایل جامع", subtitle: "پرونده پرسنلی، سرپرست و حساب کاربری", icon: Users, keys: ["hr:people:view", "hr:people:manage"], eyebrow: "عملیات منابع انسانی"},
+  {id: "contracts", resource: "contracts", title: "قرارداد و حکم", subtitle: "دفتر قراردادها، تمدید، خاتمه و پنجرهٔ ۶۰ روزهٔ پایان", icon: FileSignature, keys: ["hr:contracts:view", "hr:contracts:manage"], eyebrow: "کارگزینی"},
+  {id: "decrees", resource: "decrees", title: "احکام کارگزینی", subtitle: "صدور، شماره‌گذاری و ابلاغ حکم‌ها", icon: Stamp, keys: ["hr:decrees:view", "hr:decrees:manage", "hr:decrees:notify"], eyebrow: "کارگزینی"},
+  {id: "documents", resource: "documents", title: "مدارک پرونده", subtitle: "چک‌لیست ده مدرک الزامی هر پرونده", icon: FolderOpen, keys: ["hr:documents:view", "hr:documents:manage"], eyebrow: "کارگزینی"},
+  {id: "file-audit", resource: "file-audit", title: "ممیزی پرونده", subtitle: "پانزده قاعدهٔ بدبینانه روی چیزهایی که در پرونده ثبت شده است", icon: ShieldAlert, keys: ["hr:file-audit:view"], eyebrow: "کارگزینی"},
+  {id: "contractors", resource: "contractors", title: "شرکت‌های پیمانکار", subtitle: "پیمانکاران مستقر در سایت و تاریخ قرارداد آن‌ها", icon: Building2, keys: ["hr:contractors:view", "hr:contractors:manage"], eyebrow: "کارگزینی"},
+  {id: "team-files", resource: "contracts", title: "پرونده اعضای تیم", subtitle: "قراردادها و مدارک اعضای زیرمجموعهٔ شما", icon: FolderOpen, keys: ["hr:team-files:view"], eyebrow: "تیم من"},
   {id: "attendance", resource: "attendance", title: "حضور و غیاب", subtitle: "ثبت و بازبینی کارکرد روزانه پرسنل", icon: Clock3, keys: ["hr:attendance:view", "hr:attendance:manage"], eyebrow: "عملیات منابع انسانی"},
   {id: "shifts", resource: "shifts", title: "برنامه شیفت", subtitle: "تعریف و انتشار شیفت‌های سازمان", icon: Clock3, keys: ["hr:shifts:view", "hr:shifts:manage", "hr:shifts:team"], eyebrow: "عملیات منابع انسانی"},
   {id: "performance", resource: "performance", title: "ارزیابی عملکرد", subtitle: "ثبت، ارسال و انتشار ارزیابی شایستگی", icon: Star, keys: ["hr:performance:view", "hr:performance:manage", "hr:performance:approve"], eyebrow: "عملیات منابع انسانی"},
@@ -89,6 +97,18 @@ const CREATES: Record<string, Spec> = {
       {name: "startDate", label: "تاریخ شروع همکاری", type: "date", required: true}, {name: "contractType", label: "نوع قرارداد", type: "select", options: opts(CONTRACT_TYPES), required: true, value: "FULL_TIME"},
       {name: "phone", label: "تلفن", type: "text"}, {name: "education", label: "تحصیلات", type: "text"},
       {name: "managerId", label: "سرپرست", type: "employee"}, {name: "userId", label: "حساب کاربری", type: "user"}, {name: "active", label: "پرونده فعال است", type: "checkbox", checked: true}]},
+  contracts: {label: "قرارداد جدید", title: "ثبت قرارداد", endpoint: "/api/hr/contracts", method: "POST", keys: ["hr:contracts:manage"],
+    fields: ctx => [{name: "employeeId", label: "پرسنل", type: "employee", required: true}, {name: "kind", label: "نوع قرارداد", type: "select", options: opts(CONTRACT_KINDS), required: true, value: "ANNUAL"},
+      {name: "startDate", label: "تاریخ شروع", type: "date", required: true}, {name: "endDate", label: "تاریخ پایان (برای دائم لازم نیست)", type: "date"},
+      {name: "baseSalary", label: "حقوق پایه (ریال)", type: "number", min: 0}, {name: "contractorCompanyId", label: "شرکت پیمانکار (فقط قرارداد پیمانکاری)", type: "select", options: ctx.contractors.map(item => ({value: item.id, label: item.name}))},
+      {name: "note", label: "توضیح", type: "textarea"}]},
+  decrees: {label: "حکم جدید", title: "صدور حکم کارگزینی", endpoint: "/api/hr/decrees", method: "POST", keys: ["hr:decrees:manage"],
+    fields: ctx => [{name: "employeeId", label: "پرسنل", type: "employee", required: true}, {name: "kind", label: "نوع حکم", type: "select", options: opts(DECREE_KINDS), required: true},
+      {name: "effectiveAt", label: "تاریخ اجرا", type: "date", required: true}, {name: "baseSalary", label: "حقوق پایه (ریال)", type: "number", min: 0},
+      {name: "number", label: "شمارهٔ حکم (خالی = شمارهٔ خودکار)", type: "text"}, {name: "signer", label: "امضاکننده", type: "text"}, {name: "cosigner", label: "هم‌امضا", type: "text"}, {name: "reason", label: "شرح حکم", type: "textarea"}]},
+  contractors: {label: "پیمانکار جدید", title: "ثبت شرکت پیمانکار", endpoint: "/api/hr/contractors", method: "POST", keys: ["hr:contracts:manage"],
+    fields: [{name: "name", label: "نام شرکت", type: "text", required: true}, {name: "contractNo", label: "شمارهٔ قرارداد", type: "text"},
+      {name: "startDate", label: "شروع قرارداد", type: "date"}, {name: "endDate", label: "پایان قرارداد", type: "date"}, {name: "active", label: "قرارداد جاری است", type: "checkbox", checked: true}, {name: "note", label: "توضیح", type: "textarea"}]},
   requests: {label: "درخواست جدید", title: "ثبت درخواست پرسنلی", endpoint: "/api/hr/requests", method: "POST", keys: ["hr:requests:self"],
     fields: [{name: "kind", label: "نوع درخواست", type: "select", options: opts(HR_REQUEST_KINDS), required: true}, {name: "startDate", label: "از تاریخ", type: "date", required: true}, {name: "endDate", label: "تا تاریخ", type: "date", required: true}, {name: "minutes", label: "مدت ساعتی (دقیقه، فقط مرخصی ساعتی)", type: "number", min: 1}, {name: "description", label: "شرح درخواست", type: "textarea", required: true}]},
   attendance: {label: "ثبت کارکرد", title: "ثبت حضور و غیاب", endpoint: "/api/hr/attendance", method: "POST", keys: ["hr:attendance:manage"],
@@ -113,6 +133,20 @@ const CREATES: Record<string, Spec> = {
 };
 
 const ACTIONS: Record<string, RowAction[]> = {
+  // کارگزینی: کد ملی، تاریخ تولد، نظام وظیفه، ایثارگری و وضعیت اشتغال همان
+  // واقعیت‌هایی هستند که ممیزی می‌خواند؛ اگر از این‌جا ثبت نشوند، قاعده‌ها روی
+  // پرونده‌ای که کسی نتوانسته آن را پر کند هشدار می‌دهند.
+  people: [{id: "facts", label: "مشخصات کارگزینی", tone: "secondary", endpoint: row => `/api/hr/file-facts/${row.id}`,
+    fields: () => [{name: "nationalId", label: "کد ملی", type: "text"}, {name: "birthDate", label: "تاریخ تولد", type: "date"},
+      {name: "militaryStatus", label: "نظام وظیفه", type: "select", options: opts(MILITARY_STATUS), value: "NOT_SUBJECT"},
+      {name: "veteranStatus", label: "ایثارگری", type: "select", options: opts(VETERAN_STATUS), value: "NONE"},
+      {name: "veteranVerified", label: "مدرک ایثارگری تأیید شده است", type: "checkbox"},
+      {name: "employmentState", label: "وضعیت اشتغال", type: "select", options: opts(EMPLOYMENT_STATES), value: "ACTIVE"},
+      {name: "stateSince", label: "تاریخ تغییر وضعیت", type: "date"}],
+    toBody: (values, row) => ({nationalId: values.nationalId, birthDate: values.birthDate || undefined, militaryStatus: values.militaryStatus || str(row.militaryStatus) || "NOT_SUBJECT",
+      veteranStatus: values.veteranStatus || str(row.veteranStatus) || "NONE", veteranVerified: values.veteranVerified === true, employmentState: values.employmentState || str(row.employmentState) || "ACTIVE",
+      stateSince: values.stateSince || undefined}),
+    show: (_row, can) => can("hr:contracts:manage") || can("hr:people:manage")}],
   requests: [{id: "cancel", label: "لغو درخواست", tone: "danger", endpoint: row => `/api/hr/requests/${row.id}`, fields: [], toBody: () => ({status: "CANCELLED"}), show: (row, can) => can("hr:requests:self") && row.status === "PENDING"}],
   "team-requests": [
     {id: "approve", label: "تأیید", tone: "primary", endpoint: row => `/api/hr/requests/${row.id}`, fields: [{name: "response", label: "پاسخ (اختیاری)", type: "textarea"}], toBody: values => ({status: "APPROVED", response: values.response}), show: (row, can) => can("hr:team-requests:approve") && row.status === "PENDING"},
@@ -132,6 +166,29 @@ const ACTIONS: Record<string, RowAction[]> = {
   questionnaires: [{id: "close", label: "بستن", tone: "danger", endpoint: row => `/api/hr/questionnaires/${row.id}`, fields: [], toBody: () => ({action: "close"}), show: (row, can) => can("hr:questionnaires:manage") && row.status === "PUBLISHED"}],
   performance: [{id: "publish", label: "انتشار", tone: "primary", endpoint: row => `/api/hr/performance/${row.id}`, fields: [], toBody: () => ({action: "publish"}), show: (row, can) => can("hr:performance:approve") && row.status === "SUBMITTED"}],
   promotion: [{id: "approve", label: "تأیید ارتقا", tone: "primary", endpoint: () => "/api/hr/promotion", fields: [{name: "note", label: "یادداشت تأیید", type: "textarea"}], toBody: (values, row) => ({action: "approve", employeeId: row.employeeId, note: values.note}), show: (row, can) => can("hr:promotion:approve") && row.status !== "APPROVED"}],
+  // کارگزینی: تمدید دورهٔ جدید را از پایان دورهٔ قبل شروع می‌کند و ردیف را حفظ
+  // می‌کند؛ خاتمه ردیف را می‌بندد و به‌عنوان سابقه می‌ماند. هیچ‌کدام ردیف جدید
+  // نمی‌سازند، پس تاریخچه یک نفر یک خط مستقیم است.
+  contracts: [
+    {id: "renew", label: "تمدید", tone: "primary", endpoint: row => `/api/hr/contracts/${row.id}`,
+      fields: () => [{name: "kind", label: "نوع قرارداد جدید", type: "select", options: opts(CONTRACT_KINDS), required: true, value: "ANNUAL"}, {name: "endDate", label: "تاریخ پایان دورهٔ جدید", type: "date"}, {name: "baseSalary", label: "حقوق پایهٔ جدید (خالی = بدون تغییر)", type: "number", min: 0}, {name: "note", label: "توضیح", type: "textarea"}],
+      toBody: values => ({action: "renew", kind: values.kind, endDate: values.endDate || undefined, baseSalary: values.baseSalary, note: values.note}),
+      show: (row, can) => can("hr:contracts:manage") && row.status === "ACTIVE"},
+    {id: "terminate", label: "خاتمه", tone: "danger", endpoint: row => `/api/hr/contracts/${row.id}`,
+      fields: () => [{name: "reason", label: "دلیل خاتمه", type: "textarea", required: true}],
+      toBody: values => ({action: "terminate", reason: values.reason}),
+      show: (row, can) => can("hr:contracts:manage") && row.status === "ACTIVE"},
+  ],
+  decrees: [{id: "notify", label: "ابلاغ", tone: "primary", endpoint: row => `/api/hr/decrees/${row.id}`, fields: [], toBody: () => ({action: "notify"}), show: (row, can) => can("hr:decrees:notify") && !row.notifiedAt}],
+  documents: [{id: "file", label: "ثبت مدرک", tone: "secondary", endpoint: () => "/api/hr/documents",
+    fields: () => [{name: "kind", label: "نوع مدرک", type: "select", options: opts(FILE_DOCUMENTS), required: true}, {name: "status", label: "وضعیت", type: "select", options: opts(DOCUMENT_STATUS), required: true, value: "PRESENT"}, {name: "reference", label: "شمارهٔ مدرک", type: "text"}],
+    toBody: (values, row) => ({employeeId: row.id, kind: values.kind, status: values.status, reference: values.reference}),
+    show: (_row, can) => can("hr:documents:manage")}],
+  // ویرایش پیمانکار همان ردیف را با مقادیر فعلی می‌فرستد تا تاریخ‌ها پاک نشوند.
+  contractors: [{id: "toggle", label: "وضعیت قرارداد", tone: "secondary", endpoint: row => `/api/hr/contractors/${row.id}`,
+    fields: row => [{name: "active", label: "قرارداد جاری است", type: "checkbox", checked: row.active === true}],
+    toBody: (values, row) => ({name: row.name, contractNo: row.contractNo, startDate: str(row.startDate).slice(0, 10) || undefined, endDate: str(row.endDate).slice(0, 10) || undefined, active: values.active, note: row.note}),
+    show: (_row, can) => can("hr:contracts:manage")}],
 };
 
 const employeeName = (rows: Row[] | undefined, id: unknown) => rows?.find(row => row.id === id)?.name || "—";
@@ -151,7 +208,7 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
   const [create, setCreate] = useState<{spec: Spec; row?: Row} | null>(null);
   const [action, setAction] = useState<{spec: RowAction; row: Row} | null>(null);
   const [modalError, setModalError] = useState("");
-  const ctx: Ctx = {employees: data?.employees ?? data?.rows?.map?.((row: Row) => ({id: row.id, name: row.name})) ?? [], jobs: data?.jobs ?? [], users: data?.users ?? []};
+  const ctx: Ctx = {employees: data?.employees ?? data?.rows?.map?.((row: Row) => ({id: row.id, name: row.name})) ?? [], jobs: data?.jobs ?? [], users: data?.users ?? [], contractors: data?.contractors ?? []};
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!view) return;
@@ -193,7 +250,19 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     const push = (cells: ReactNode[]) => body.push(cells);
     if (["people", "team"].includes(viewId)) {
       head.push("نام", "کد پرسنلی", "واحد / عنوان", "سرپرست", "قرارداد / شروع", "وضعیت", "عملیات");
-      filtered.forEach(row => push([<span className="request-title">{str(row.name)}</span>, str(row.personnelCode), <>{str(row.department)}<span className="table-meta">{str(row.jobTitle)}</span></>, row.manager?.name || "—", <>{CONTRACT_TYPES[row.contractType as keyof typeof CONTRACT_TYPES] || "—"}<span className="table-meta">{fdate(row.startDate)}</span></>, row.active ? <Badge tone="green">فعال</Badge> : <Badge tone="gray">غیرفعال</Badge>, viewId === "people" ? <button className="secondary-button" disabled={busy} onClick={() => setCreate({spec: {...CREATES.people, title: "ویرایش پرونده پرسنلی", method: "PATCH", endpoint: `/api/hr/people/${row.id}`}, row})}>ویرایش</button> : "—"]));
+      filtered.forEach(row => push([<span className="request-title">{str(row.name)}</span>, str(row.personnelCode), <>{str(row.department)}<span className="table-meta">{str(row.jobTitle)}</span></>, row.manager?.name || "—", <>{CONTRACT_TYPES[row.contractType as keyof typeof CONTRACT_TYPES] || "—"}<span className="table-meta">{fdate(row.startDate)}</span></>, row.active ? <Badge tone="green">فعال</Badge> : <Badge tone="gray">غیرفعال</Badge>, viewId === "people" ? <div className="flex flex-wrap gap-2"><button className="secondary-button" disabled={busy} onClick={() => setCreate({spec: {...CREATES.people, title: "ویرایش پرونده پرسنلی", method: "PATCH", endpoint: `/api/hr/people/${row.id}`}, row})}>ویرایش</button>{actionButtons("people", row)}</div> : "—"]));
+    } else if (["contracts", "team-files"].includes(viewId)) {
+      head.push("پرسنل", "نوع قرارداد", "بازهٔ قرارداد", "حقوق پایه", "پایان قرارداد", "وضعیت", "عملیات");
+      filtered.forEach(row => push([<>{row.employee?.name || "—"}<span className="table-meta">{str(row.employee?.personnelCode)} · {str(row.employee?.department)}</span></>, str(row.kindTitle) || "—", <>{fshort(row.startDate)}<span className="table-meta">تا {row.endDate ? fshort(row.endDate) : "دائم"}</span></>, nz(row.baseSalary) ? `${fa(nz(row.baseSalary))} ریال` : "—", badge(row.expiry?.level, EXPIRY_LABELS), badge(row.status, CONTRACT_STATUS), actionButtons("contracts", row)]));
+    } else if (viewId === "decrees") {
+      head.push("شمارهٔ حکم", "پرسنل", "نوع حکم", "تاریخ اجرا", "ابلاغ", "وضعیت", "عملیات");
+      filtered.forEach(row => push([<span className="request-title">{str(row.number)}</span>, row.employee?.name || "—", str(row.kindTitle) || "—", fshort(row.effectiveAt), row.notifiedAt ? <Badge tone="green">ابلاغ‌شده در {fshort(row.notifiedAt)}</Badge> : <Badge tone="amber">{fa(nz(row.notifyDays))} روز در انتظار ابلاغ</Badge>, badge(row.status, DECREE_STATUS), actionButtons("decrees", row)]));
+    } else if (viewId === "documents") {
+      head.push("پرسنل", "کد پرسنلی", "تکمیل پرونده", "مدارک ثبت‌شده", "مدارک ناقص", "عملیات");
+      filtered.forEach(row => push([<span className="request-title">{str(row.name)}</span>, str(row.personnelCode), <><b>{fa(nz(row.percent))}٪</b><span className="table-meta">از {fa(Object.keys(FILE_DOCUMENTS).length)} مدرک</span></>, <span className="table-meta">{(row.present || []).map((key: string) => FILE_DOCUMENTS[key as keyof typeof FILE_DOCUMENTS] || key).join("، ") || "—"}</span>, <span className="table-meta">{(row.missing || []).map((key: string) => FILE_DOCUMENTS[key as keyof typeof FILE_DOCUMENTS] || key).join("، ") || "کامل"}</span>, actionButtons("documents", row)]));
+    } else if (viewId === "contractors") {
+      head.push("شرکت", "شمارهٔ قرارداد", "بازهٔ قرارداد", "نفرات مستقر", "پایان قرارداد", "وضعیت", "عملیات");
+      filtered.forEach(row => push([<span className="request-title">{str(row.name)}</span>, str(row.contractNo) || "—", <>{fshort(row.startDate)}<span className="table-meta">تا {fshort(row.endDate)}</span></>, fa(nz(row.headcount)), badge(row.expiry?.level, EXPIRY_LABELS), row.active ? <Badge tone="green">قرارداد جاری</Badge> : <Badge tone="gray">پایان‌یافته</Badge>, actionButtons("contractors", row)]));
     } else if (["requests", "team-requests"].includes(viewId)) {
       head.push("نوع", "بازه", "ثبت‌کننده", "وضعیت", "عملیات");
       filtered.forEach(row => push([<>{HR_REQUEST_KINDS[row.kind as keyof typeof HR_REQUEST_KINDS] || str(row.kind)}<span className="table-meta">{str(row.description).slice(0, 60)}</span></>, `${fshort(row.startDate)} تا ${fshort(row.endDate)}`, row.employee?.name || "—", badge(row.status, HR_REQUEST_STATUS), actionButtons(viewId, row)]));
@@ -273,6 +342,26 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     </div>;
   }
 
+  function renderAudit(): ReactNode {
+    const findings: Row[] = data?.findings ?? [];
+    const summary: Row = data?.summary ?? {};
+    const cards: [string, string][] = [["شاخص سلامت پرونده", `${fa(nz(summary.health))}٪`], ["ریسک", fa(nz(summary.risk))], ["هشدار", fa(nz(summary.warn))], ["پروندهٔ دارای یافته", `${fa(nz(summary.people))} از ${fa(nz(summary.files))}`]];
+    // هر یافته به صفحه‌ای اشاره می‌کند که رفعش در آن انجام می‌شود؛ یافتهٔ HSE
+    // منشأ دیگری دارد و دکمه‌ای نمی‌گیرد.
+    const fix = (action: unknown) => {
+      const value = str(action);
+      if (value.startsWith("notify:")) return "decrees";
+      if (value === "renew" || value === "probation") return "contracts";
+      if (value === "documents" || value === "contractors" || value === "profile") return value;
+      return "";
+    };
+    return <div className="space-y-6">
+      <div className="stat-grid">{cards.map(([label, value]) => <div className="stat-card" key={label}><div><span>{label}</span><strong>{value}</strong></div><span className="stat-icon green"><ShieldAlert size={22}/></span></div>)}</div>
+      <Table head={["شدت", "قاعده", "پرونده", "شرح یافته", "اقدام"]} rows={findings.map(finding => [badge(finding.severity, {risk: "ریسک", warn: "هشدار"}), str(finding.rule), str(finding.employeeName) || "سازمان", <span className="preserve-text">{str(finding.text)}</span>, fix(finding.action) ? <Link className="text-button" href={`/hr?view=${fix(finding.action)}`}>رفع در این بخش <ArrowUpLeft size={13}/></Link> : "—"])} empty="یافته‌ای وجود ندارد؛ پرونده‌ها سالم‌اند"/>
+      <section className="panel"><div className="dialog-body"><p className="table-meta">این فهرست ذخیره نمی‌شود: هر بار از روی همین پرونده‌ها دوباره محاسبه می‌شود، پس یافته‌ای از پرونده‌ای که دیگر آن شکل را ندارد باقی نمی‌ماند. پیدا شدن یک یافته، پرونده را تغییر نمی‌دهد.</p></div></section>
+    </div>;
+  }
+
   function renderProductivity(): ReactNode {
     const kpis = data?.kpis ?? {};
     const scenarios: {key: string; title: string; desc: string; metrics: Row}[] = data?.scenarios ?? [];
@@ -305,7 +394,7 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
   const exportButton = (["reports", "team-reports"].includes(viewId || "") && can(viewId === "team-reports" ? "hr:team-reports:export" : "hr:reports:export")) ? <a className="secondary-button" href={`/api/hr/export?scope=${viewId === "team-reports" ? "team" : "all"}`}><Download size={16}/>خروجی CSV</a> : null;
   const createSpec = viewId ? CREATES[viewId] : null;
   const canCreate = createSpec && createSpec.keys.some(can);
-  const searchable = !["dashboard", "inbox", "promotion", "productivity", "my-questionnaires"].includes(viewId || "");
+  const searchable = !["dashboard", "inbox", "promotion", "productivity", "file-audit", "my-questionnaires"].includes(viewId || "");
 
   return <AppShell session={session} title={view?.title || "دسترسی محدود"} section="منابع انسانی" items={navItems} active={viewId || ""} actions={<Link className="icon-button notification-button" href="/hr?view=inbox" aria-label="کارتابل من"><Bell size={19}/></Link>}>
     <div className="page-heading"><div><span className="eyebrow">{view?.eyebrow || "منابع انسانی"}</span><h1>{view?.title || "دسترسی به این بخش فعال نیست"}</h1><p>{view?.subtitle || "مجوز این بخش باید توسط مدیر زیرسیستم به گروه شما اختصاص یابد."}</p></div><div className="flex flex-wrap gap-2">{createSpec && canCreate && <button className="primary-button" onClick={() => {setModalError(""); setCreate({spec: createSpec});}}><Plus size={18}/>{createSpec.label}</button>}{exportButton}</div></div>
@@ -317,11 +406,12 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
       {viewId === "profile" && renderProfile()}
       {viewId === "promotion" && renderPromotion()}
       {viewId === "productivity" && renderProductivity()}
+      {viewId === "file-audit" && renderAudit()}
       {viewId === "features" && renderFeatures(false)}
       {viewId === "my-features" && renderFeatures(true)}
       {viewId === "my-questionnaires" && renderMyQuestionnaires()}
       {searchable && <div className="toolbar"><label className="search-field"><Search size={18}/><input aria-label="جستجو در این بخش" placeholder="جستجو در این بخش…" value={search} onChange={event => setSearch(event.target.value)}/></label></div>}
-      {!["dashboard", "inbox", "profile", "promotion", "productivity", "features", "my-features", "my-questionnaires"].includes(viewId || "") && renderTable()}
+      {!["dashboard", "inbox", "profile", "promotion", "productivity", "file-audit", "features", "my-features", "my-questionnaires"].includes(viewId || "") && renderTable()}
     </>}
     {create && <CreateDialog spec={create.spec} values={create.row} ctx={ctx} busy={busy} error={modalError} close={() => {setCreate(null); setModalError("");}} onSubmit={(body, message) => void mutate(() => api(create.spec.endpoint, create.spec.method, body), message, true)}/>}
     {action && (action.spec.id === "answer"
@@ -342,7 +432,11 @@ function RenderField({field, ctx, values = {}}: {field: Field; ctx: Ctx; values?
   if (field.type === "checkbox") return <label className="checkbox-label"><input type="checkbox" name={field.name} defaultChecked={current === undefined ? !!field.checked : current === true}/>{field.label}</label>;
   if (["select", "employee", "job", "user"].includes(field.type)) return <label>{field.label}<select name={field.name} required={field.required} defaultValue={current !== undefined ? str(current) : (field.value ?? "")}><option value="">{field.required ? "انتخاب کنید…" : "—"}</option>{fieldLabel(field, ctx).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
   if (field.type === "textarea") return <label>{field.label}<textarea name={field.name} required={field.required} maxLength={20000} rows={4} placeholder={field.placeholder} defaultValue={current !== undefined ? str(current) : undefined}/></label>;
-  return <label>{field.label}<input name={field.name} type={field.type === "score" || field.type === "number" ? "number" : field.type} required={field.required} min={field.min} max={field.max} step={field.type === "score" ? 1 : field.type === "number" ? 1 : undefined} placeholder={field.placeholder} defaultValue={current !== undefined ? str(current) : (field.value ?? undefined)}/>{field.help && <span className="form-hint">{field.help}</span>}</label>;
+  // A row carries its dates as full ISO timestamps, which a date input rejects;
+  // slicing to the calendar day is what makes an edit dialog reopen with the
+  // value it already has (and therefore not submit it as blank).
+  const initial = current !== undefined ? str(current) : str(field.value ?? "");
+  return <label>{field.label}<input name={field.name} type={field.type === "score" || field.type === "number" ? "number" : field.type} required={field.required} min={field.min} max={field.max} step={field.type === "score" ? 1 : field.type === "number" ? 1 : undefined} placeholder={field.placeholder} defaultValue={(field.type === "date" ? initial.slice(0, 10) : initial) || undefined}/>{field.help && <span className="form-hint">{field.help}</span>}</label>;
 }
 function readValues(fields: Field[], form: FormData): Record<string, unknown> {
   const values: Record<string, unknown> = {};

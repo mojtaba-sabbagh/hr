@@ -1,12 +1,13 @@
 import { prisma } from "./prisma";
 import { AccessError, bodyObject, hasPermission, textField } from "./access-policy";
 import { CANDIDATE_STAGES, HR_REQUEST_KINDS } from "./hr-types";
-import { canAny, dateField, employeeOption, employeeScope, guardVersion, integer, notifyHr, option, optionalText, ownEmployee, requireAny, scopedEmployee, today } from "./hr-policy";
+import { OrgHierarchyService } from "./org-chart";
+import { canAny, dateField, employeeOption, employeeScope, guardVersion, integer, notifyHr, option, optionalText, ownEmployee, requireAny, scopedEmployee, seatSnapshot, tenantWhere, today } from "./hr-policy";
 import type { SessionUser } from "./session-types";
 
 const requestInclude = {employee: {select: employeeOption}, events: {orderBy: {createdAt: "asc" as const}, select: {id: true, actorName: true, status: true, note: true, createdAt: true}}};
 export async function listHrRequests(actor: SessionUser, mine: boolean) {
-  const scope = mine ? employeeScope(actor, [], [], ["hr:requests:self"]) : employeeScope(actor, ["hr:requests:view", "hr:requests:approve"], ["hr:team-requests:view", "hr:team-requests:approve"]);
+  const scope = await (mine ? employeeScope(actor, [], [], ["hr:requests:self"]) : employeeScope(actor, ["hr:requests:view", "hr:requests:approve"], ["hr:team-requests:view", "hr:team-requests:approve"]));
   return {rows: await prisma.hrRequest.findMany({where: {employee: scope}, include: requestInclude, orderBy: {createdAt: "desc"}, take: 200})};
 }
 export async function createHrRequest(actor: SessionUser, input: unknown) {
@@ -94,7 +95,7 @@ export async function saveCandidate(actor: SessionUser, input: unknown, id?: str
 }
 export async function listTransfers(actor: SessionUser) {
   requireAny(actor, ["hr:placement:view", "hr:placement:manage", "hr:placement:approve"]);
-  return {rows: await prisma.hrTransfer.findMany({include: {employee: {select: employeeOption}}, orderBy: {createdAt: "desc"}, take: 200}), employees: hasPermission(actor, "hr:placement:manage") ? await prisma.hrEmployee.findMany({where: {active: true}, select: employeeOption, orderBy: {name: "asc"}}) : []};
+  return {rows: await prisma.hrTransfer.findMany({include: {employee: {select: employeeOption}}, orderBy: {createdAt: "desc"}, take: 200}), employees: hasPermission(actor, "hr:placement:manage") ? await prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor)}, select: employeeOption, orderBy: {name: "asc"}}) : []};
 }
 export async function saveTransfer(actor: SessionUser, input: unknown, id?: string) {
   const body = bodyObject(input);
@@ -115,7 +116,21 @@ export async function saveTransfer(actor: SessionUser, input: unknown, id?: stri
         await guardVersion(tx, "employee", row.employeeId);
         const current = await tx.hrEmployee.findUniqueOrThrow({where: {id: row.employeeId}});
         if (!current.active || current.department !== row.fromDepartment || current.jobTitle !== row.fromJobTitle || current.worksite !== row.fromWorksite) throw new AccessError(409, "وضعیت شغلی تغییر کرده است؛ پیشنهاد تازه ثبت کنید");
-        await tx.hrEmployee.update({where: {id: row.employeeId}, data: {department: row.toDepartment, jobTitle: row.toJobTitle, worksite: row.toWorksite}});
+        // A placed person moves between seats, never by rewriting the file: the
+        // destination must exist on the chart, and the file follows it.
+        const seat = current.userId && current.companyId ? await seatSnapshot(tx, current.userId, current.companyId) : null;
+        if (seat && current.companyId && current.userId) {
+          const target = await tx.position.findFirst({where: {companyId: current.companyId, status: "ACTIVE", title: row.toJobTitle, department: {name: row.toDepartment}}, select: {id: true}});
+          if (!target) throw new AccessError(409, "پستی با واحد و عنوان مقصد در چارت سازمانی نیست؛ ابتدا پست را تعریف کنید");
+          const member = await tx.companyMember.findFirst({where: {companyId: current.companyId, userId: current.userId, active: true}, select: {id: true}});
+          if (!member) throw new AccessError(409, "عضویت فرد در شرکت فعال نیست");
+          await tx.positionAssignment.updateMany({where: {companyId: current.companyId, memberId: member.id, isPrimary: true, isActive: true}, data: {isActive: false, endDate: row.effectiveDate}});
+          await tx.positionAssignment.create({data: {companyId: current.companyId, memberId: member.id, positionId: target.id, assignmentType: "PERMANENT", isPrimary: true, isActive: true, startDate: row.effectiveDate}});
+          const hierarchy = new OrgHierarchyService(tx);
+          await hierarchy.syncManagerCache(current.companyId, seat.positionId, tx);
+          await hierarchy.syncManagerCache(current.companyId, target.id, tx);
+        }
+        await tx.hrEmployee.update({where: {id: row.employeeId}, data: {worksite: row.toWorksite, ...(seat ? {} : {department: row.toDepartment, jobTitle: row.toJobTitle})}});
       }
       const result = await tx.hrTransfer.update({where: {id}, data: {status: "APPROVED", decisionNote, decidedBy: actor.id, ...(due ? {appliedAt: new Date()} : {})}});
       await notifyHr(tx, row.employeeId, due ? "جابجایی شغلی اعمال شد" : "پیشنهاد جابجایی تأیید شد", `${row.toDepartment} — ${row.toJobTitle}`, "profile"); return result;

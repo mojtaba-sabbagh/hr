@@ -2,10 +2,12 @@
 // the core portal, and the human-resources subsystem (including talent, feature bank and
 // productivity planning). Safe to run repeatedly: every write is an upsert or guarded by a
 // natural key, and administrator choices such as a disabled subsystem are never overwritten.
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { GROUP_TEMPLATES, PERMISSIONS, SUBSYSTEMS } from "../app/lib/access-catalog";
 import { PLAN_SCENARIOS } from "../app/lib/hr-types";
+import { OrgHierarchyService } from "../app/lib/org-chart";
+import { defaultSettings } from "../app/lib/workflow/types";
 
 const prisma = new PrismaClient();
 const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || "Itfco-Admin-1405";
@@ -90,19 +92,67 @@ const EMPLOYEES: EmployeeSeed[] = [
   {code: "EMP-1005", name: "نگار حسینی", email: "negar.hosseini@itfco.example", department: "فناوری اطلاعات", jobTitle: "کارشناس نرم‌افزار", worksite: "دفتر مرکزی", startDate: "2019-11-01"},
 ];
 
-async function seedEmployees(users: Map<string, string>) {
+const COMPANY = {slug: "itfco", name: "شرکت هوشمند فناوران برتر ایرانیان"};
+
+async function seedCompany() {
+  return prisma.company.upsert({
+    where: {slug: COMPANY.slug},
+    create: {...COMPANY, settings: defaultSettings() as unknown as Prisma.InputJsonValue},
+    update: {},
+  });
+}
+
+async function seedEmployees(users: Map<string, string>, companyId: string) {
   const byCode = new Map<string, string>();
   for (const employee of EMPLOYEES) {
     const userId = users.get(employee.email) ?? null;
-    const managerId = employee.manager ? byCode.get(employee.manager) ?? null : null;
+    // No managerId here: the reporting line is built as a chart below and the
+    // personnel-file column is only ever a cache of it.
     const record = await prisma.hrEmployee.upsert({
       where: {personnelCode: employee.code},
-      create: {personnelCode: employee.code, name: employee.name, userId, department: employee.department, jobTitle: employee.jobTitle, worksite: employee.worksite, startDate: new Date(employee.startDate), contractType: "FULL_TIME", managerId, active: true},
-      update: {name: employee.name, department: employee.department, jobTitle: employee.jobTitle, worksite: employee.worksite, managerId, active: true},
+      create: {personnelCode: employee.code, name: employee.name, userId, companyId, department: employee.department, jobTitle: employee.jobTitle, worksite: employee.worksite, startDate: new Date(employee.startDate), contractType: "FULL_TIME", active: true},
+      update: {name: employee.name, companyId, department: employee.department, jobTitle: employee.jobTitle, worksite: employee.worksite, active: true},
     });
+    if (userId) {
+      const member = await prisma.companyMember.findUnique({where: {companyId_userId: {companyId, userId}}});
+      if (!member) await prisma.companyMember.create({data: {companyId, userId, active: true}});
+    }
     byCode.set(employee.code, record.id);
   }
   return byCode;
+}
+
+/**
+ * The demo roster as one organization: a unit per department string, a seat per
+ * person, reporting lines from the same `manager` field the seeds always had,
+ * and then the derived caches written from the chart.
+ */
+async function seedChart(companyId: string) {
+  const units = new Map<string, string>();
+  let index = 0;
+  for (const employee of EMPLOYEES) {
+    if (units.has(employee.department)) continue;
+    const code = `DEMO-${String(++index).padStart(2, "0")}`;
+    const row = await prisma.department.upsert({where: {companyId_code: {companyId, code}}, update: {}, create: {companyId, code, name: employee.department}});
+    units.set(employee.department, row.id);
+  }
+  const seats = new Map<string, string>();
+  for (const employee of EMPLOYEES) {
+    const code = `POS-${employee.code}`;
+    const reportsToPositionId = employee.manager ? seats.get(employee.manager) ?? null : null;
+    const row = await prisma.position.upsert({
+      where: {companyId_code: {companyId, code}},
+      update: {},
+      create: {companyId, code, title: employee.jobTitle, departmentId: units.get(employee.department)!, status: "ACTIVE", reportsToPositionId},
+      select: {id: true},
+    });
+    seats.set(employee.code, row.id);
+    const member = await prisma.companyMember.findFirst({where: {companyId, user: {email: employee.email}}, select: {id: true}});
+    if (!member) continue;
+    const placed = await prisma.positionAssignment.findFirst({where: {companyId, memberId: member.id, positionId: row.id, isActive: true}, select: {id: true}});
+    if (!placed) await prisma.positionAssignment.create({data: {companyId, memberId: member.id, positionId: row.id, assignmentType: "PERMANENT", isPrimary: true, isActive: true, startDate: new Date(employee.startDate)}});
+  }
+  await new OrgHierarchyService(prisma).rebuildManagerCache(companyId);
 }
 
 const FEATURES: {code: string; category: string; item: string; value: number}[] = [
@@ -216,12 +266,14 @@ async function main() {
   }
   const groups = await seedGroups();
   const users = await seedAccounts(groups);
-  const employees = await seedEmployees(users);
+  const company = await seedCompany();
+  const employees = await seedEmployees(users, company.id);
+  await seedChart(company.id);
   await seedTalent(employees);
   await seedProductivity(employees);
   await seedRegulations();
   await seedCore(users);
-  console.log(`Seeded ${SUBSYSTEMS.length} subsystems, ${PERMISSIONS.length} permissions, ${ACCOUNTS.length} accounts and ${EMPLOYEES.length} personnel records.`);
+  console.log(`Seeded ${SUBSYSTEMS.length} subsystems, ${PERMISSIONS.length} permissions, ${ACCOUNTS.length} accounts, ${EMPLOYEES.length} personnel records and their organisational chart.`);
 }
 
 main()

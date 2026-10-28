@@ -1,19 +1,30 @@
 import { prisma } from "./prisma";
 import { AccessError, bodyObject, hasPermission } from "./access-policy";
 import type { SessionUser } from "./session-types";
-import { canAny, dateField, employeeInclude, employeeScope, requireAny, requireHr, today } from "./hr-policy";
+import { canAny, dateField, employeeInclude, employeeScope, requireAny, requireHr, teamEmployeeIds, tenantWhere, today } from "./hr-policy";
 import { listAttendance, listEvaluations, listPeople, listShifts, myProfile, saveAttendance, saveEmployee, saveEvaluation, saveShift, updateMyProfile } from "./hr-people";
 import { createHrRequest, decideHrRequest, listHrRequests, listRecruitment, listTransfers, saveCandidate, saveJob, saveTransfer } from "./hr-workflows";
 import { listFeedback, listRegulations, listSurveys, saveFeedback, saveRegulation, saveSurvey, submitSurvey, surveyResults } from "./hr-engagement";
 import { listFeatures, listProductivity, listPromotion, myFeatures, saveFeature, saveProductivity, saveTalent } from "./hr-talent";
+import { contractStats, fileAudit, listContractors, listContracts, listDecrees, listDocuments, notifyDecree, renewContract, saveContract, saveContractor, saveDecree, saveDocument, saveFileFacts, terminateContract } from "./hr-contracts";
 
 async function dashboard(actor: SessionUser) {
   const profile = await prisma.hrEmployee.findUnique({where: {userId: actor.id}, include: employeeInclude});
   const stats: {label: string; value: number; view: string}[] = [];
-  if (hasPermission(actor, "hr:dashboard:view")) stats.push({label: "پرسنل فعال سازمان", value: await prisma.hrEmployee.count({where: {active: true}}), view: "people"});
-  if (hasPermission(actor, "hr:team:team")) stats.push({label: "اعضای فعال تیم من", value: await prisma.hrEmployee.count({where: {active: true, manager: {userId: actor.id, active: true}}}), view: "team"});
+  if (hasPermission(actor, "hr:dashboard:view")) stats.push({label: "پرسنل فعال سازمان", value: await prisma.hrEmployee.count({where: {active: true, ...await tenantWhere(actor)}}), view: "people"});
+  // کارگزینی: the count that actually needs action — contracts already expired
+  // (people working without one) plus the ones inside the 60-day window.
+  if (hasPermission(actor, "hr:contracts:view") || hasPermission(actor, "hr:contracts:manage")) {
+    const contracts = await contractStats(actor);
+    stats.push({label: "قراردادهای منقضی یا در شرف پایان", value: contracts.expiring + contracts.expired, view: "contracts"});
+  }
+  // Same source as the team page: the reporting chart, with the legacy manager chain as fallback.
+  if (hasPermission(actor, "hr:team:team")) stats.push({label: "اعضای فعال تیم من", value: await prisma.hrEmployee.count({where: {active: true, id: {in: await teamEmployeeIds(actor)}}}), view: "team"});
   if (hasPermission(actor, "hr:requests:self")) stats.push({label: "درخواست‌های باز من", value: await prisma.hrRequest.count({where: {employee: {userId: actor.id, active: true}, status: "PENDING"}}), view: "requests"});
-  if (canAny(actor, ["hr:requests:view", "hr:requests:approve", "hr:team-requests:view", "hr:team-requests:approve"])) stats.push({label: "درخواست‌های منتظر بررسی", value: await prisma.hrRequest.count({where: {status: "PENDING", employee: {...employeeScope(actor, ["hr:requests:view", "hr:requests:approve"], ["hr:team-requests:view", "hr:team-requests:approve"]), userId: {not: actor.id}}}}), view: "team-requests"});
+  if (canAny(actor, ["hr:requests:view", "hr:requests:approve", "hr:team-requests:view", "hr:team-requests:approve"])) {
+    const pendingScope = await employeeScope(actor, ["hr:requests:view", "hr:requests:approve"], ["hr:team-requests:view", "hr:team-requests:approve"]);
+    stats.push({label: "درخواست‌های منتظر بررسی", value: await prisma.hrRequest.count({where: {status: "PENDING", employee: {...pendingScope, userId: {not: actor.id}}}}), view: "team-requests"});
+  }
   if (hasPermission(actor, "hr:recruitment:view")) stats.push({label: "موقعیت‌های شغلی باز", value: await prisma.hrJob.count({where: {status: "OPEN"}}), view: "jobs"});
   if (hasPermission(actor, "hr:performance:approve")) stats.push({label: "ارزیابی‌های منتظر انتشار", value: await prisma.hrEvaluation.count({where: {status: "SUBMITTED", authorId: {not: actor.id}}}), view: "performance"});
   if (profile?.active && hasPermission(actor, "hr:results:self")) stats.push({label: "پرسشنامه‌های در انتظار پاسخ", value: await prisma.hrSurvey.count({where: {status: "PUBLISHED", AND: [{OR: [{department: null}, {department: profile.department}]}, {OR: [{dueDate: null}, {dueDate: {gte: dateField(today(), "امروز")}}]}], responses: {none: {employeeId: profile.id}}}}), view: "my-questionnaires"});
@@ -25,7 +36,7 @@ export async function getHrReport(actor: SessionUser, team: boolean, query: URLS
   const end = dateField(query.get("to") || today(), "پایان بازه");
   const start = dateField(query.get("from") || new Date(end.getTime() - 29 * 86400000).toISOString().slice(0, 10), "شروع بازه");
   if (end < start || end.getTime() - start.getTime() > 366 * 86400000) throw new AccessError(400, "بازه گزارش باید مثبت و حداکثر یک‌ساله باشد");
-  const where = team ? employeeScope(actor, [], ["hr:team-reports:view", "hr:team-reports:export"]) : {};
+  const where = team ? await employeeScope(actor, [], ["hr:team-reports:view", "hr:team-reports:export"]) : await tenantWhere(actor);
   const people = await prisma.hrEmployee.findMany({where, select: {id: true, name: true, personnelCode: true, department: true, active: true,
     attendance: {where: {workDate: {gte: start, lte: end}}, select: {workedMinutes: true, status: true}},
     requests: {where: {startDate: {lte: end}, endDate: {gte: start}}, select: {status: true, kind: true}},
@@ -63,6 +74,11 @@ export async function readHr(session: SessionUser | null, resource: string, quer
     case "productivity": return listProductivity(actor);
     case "reports": return getHrReport(actor, false, query);
     case "team-reports": return getHrReport(actor, true, query);
+    case "contracts": return listContracts(actor, query);
+    case "decrees": return listDecrees(actor, query);
+    case "documents": return listDocuments(actor);
+    case "file-audit": return fileAudit(actor);
+    case "contractors": return listContractors(actor);
     case "inbox": return {rows: await prisma.hrNotification.findMany({where: {recipientId: actor.id}, orderBy: {createdAt: "desc"}, take: 200})};
     default: throw new AccessError(404, "بخش منابع انسانی یافت نشد");
   }
@@ -87,6 +103,22 @@ export async function writeHr(session: SessionUser | null, resource: string, inp
     case "features": return saveFeature(actor, input);
     case "promotion": return saveTalent(actor, input);
     case "productivity": return saveProductivity(actor, input, id);
+    // یک ردیف قرارداد سه کار دارد: ثبت/ویرایش، تمدید و خاتمه. تمدید و خاتمه فقط
+    // روی ردیف موجود معنا دارند، پس با `id` و `action` تفکیک می‌شوند.
+    case "contracts": {
+      const body = bodyObject(input);
+      if (id && body.action === "renew") return renewContract(actor, id, input);
+      if (id && body.action === "terminate") return terminateContract(actor, id, input);
+      return saveContract(actor, input, id);
+    }
+    case "decrees": {
+      const body = bodyObject(input);
+      if (id && body.action === "notify") return notifyDecree(actor, id);
+      return saveDecree(actor, input, id);
+    }
+    case "documents": return saveDocument(actor, input);
+    case "contractors": return saveContractor(actor, input, id);
+    case "file-facts": if (!id) throw new AccessError(400, "پرونده انتخاب کنید"); return saveFileFacts(actor, id, input);
     case "inbox": {
       const body = bodyObject(input);
       if (!id && body.all !== true) throw new AccessError(400, "اعلان انتخاب کنید");

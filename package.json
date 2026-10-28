@@ -14,8 +14,12 @@
     "typecheck": "tsc --noEmit",
     "seed:prototype": "ts-node --project prisma/tsconfig.seed.json prisma/seed-prototype.ts",
     "backfill:org": "ts-node --project prisma/tsconfig.seed.json prisma/backfill-org-chart.ts",
+    "backfill:hr-company": "ts-node --project prisma/tsconfig.seed.json prisma/backfill-hr-company.ts",
     "test:prototype": "node --test tests/prototype-access.test.cjs",
     "test:org": "node --test tests/org-chart.test.cjs",
+    "test:hr-scope": "node --test tests/hr-scope.test.cjs",
+    "test:file-audit": "node --test tests/hr-file-audit.test.cjs",
+    "test:contracts": "node --test tests/hr-contracts.test.cjs",
     "generate": "prisma generate",
     "postinstall": "prisma generate"
   },

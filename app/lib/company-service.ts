@@ -376,6 +376,8 @@ export async function saveDepartment(actor: SessionUser, companyId: string, valu
     const department = id
       ? await tx.department.update({where: {id}, data})
       : await tx.department.create({data: {...data, companyId}});
+    // Personnel files show the department of the seat, so a rename must follow through.
+    if (id) await orgChart.syncDepartmentCache(companyId, department.id, tx);
     await audit(tx, actor, companyId, id ? "department.update" : "department.create", department.id, name);
     return {id: department.id};
   });

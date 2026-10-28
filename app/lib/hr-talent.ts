@@ -1,7 +1,7 @@
 import { prisma } from "./prisma";
 import { AccessError, bodyObject, textField } from "./access-policy";
 import { FEATURE_CATEGORIES, FEATURE_CATEGORY_BY_ID, featureItems, OKR_STATUS, PLAN_SCENARIOS, PROMOTION_STATUS } from "./hr-types";
-import { bool, canAny, employeeOption, integer, notifyHr, option, optionalText, ownEmployee, requireAny, scopedEmployee } from "./hr-policy";
+import { bool, canAny, employeeOption, integer, notifyHr, option, optionalText, ownEmployee, requireAny, scopedEmployee, tenantWhere } from "./hr-policy";
 import type { SessionUser } from "./session-types";
 
 // ── بانک ویژگی‌های فردی ──────────────────────────────────────────────
@@ -10,9 +10,9 @@ export async function listFeatures(actor: SessionUser, query = new URLSearchPara
   const global = canAny(actor, ["hr:bank:view", "hr:bank:manage"]);
   let employeeId = query.get("employeeId");
   if (!employeeId && !global) employeeId = (await ownEmployee(actor)).id;
-  if (!employeeId) return {catalog: FEATURE_CATEGORIES, rows: [], employees: await prisma.hrEmployee.findMany({where: {active: true}, select: employeeOption, orderBy: {name: "asc"}})};
+  if (!employeeId) return {catalog: FEATURE_CATEGORIES, rows: [], employees: await prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor)}, select: employeeOption, orderBy: {name: "asc"}})};
   const employee = await scopedEmployee(prisma, actor, employeeId, ["hr:bank:view", "hr:bank:manage"], [], ["hr:bank:self"]);
-  return {catalog: FEATURE_CATEGORIES, employee, rows: await prisma.hrEmployeeFeature.findMany({where: {employeeId: employee.id}, orderBy: [{category: "asc"}, {item: "asc"}]}), employees: global ? await prisma.hrEmployee.findMany({where: {active: true}, select: employeeOption, orderBy: {name: "asc"}}) : []};
+  return {catalog: FEATURE_CATEGORIES, employee, rows: await prisma.hrEmployeeFeature.findMany({where: {employeeId: employee.id}, orderBy: [{category: "asc"}, {item: "asc"}]}), employees: global ? await prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor)}, select: employeeOption, orderBy: {name: "asc"}}) : []};
 }
 export async function myFeatures(actor: SessionUser) {
   requireAny(actor, ["hr:bank:self"]);
@@ -50,7 +50,7 @@ function careerSteps(value: unknown) {
 }
 export async function listPromotion(actor: SessionUser) {
   requireAny(actor, ["hr:promotion:view", "hr:promotion:manage", "hr:promotion:approve"]);
-  const employees = await prisma.hrEmployee.findMany({where: {active: true}, select: {...employeeOption, jobTitle: true, startDate: true}, orderBy: {name: "asc"}});
+  const employees = await prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor)}, select: {...employeeOption, jobTitle: true, startDate: true}, orderBy: {name: "asc"}});
   const reviews = await prisma.hrTalentReview.findMany({where: {employeeId: {in: employees.map(e => e.id)}}, include: {employee: {select: employeeOption}}});
   const map = new Map(reviews.map(review => [review.employeeId, review]));
   const roster = employees.map(e => {
@@ -104,8 +104,8 @@ function planKey(value: unknown): keyof typeof PLAN_SCENARIOS {
   return value as keyof typeof PLAN_SCENARIOS;
 }
 // Risk and burnout are derived from the individual feature bank (health domains), never hard-coded.
-async function productivityRoster(): Promise<Roster[]> {
-  const employees = await prisma.hrEmployee.findMany({where: {active: true}, select: {...employeeOption, jobTitle: true}});
+async function productivityRoster(actor: SessionUser): Promise<Roster[]> {
+  const employees = await prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor)}, select: {...employeeOption, jobTitle: true}});
   const ids = employees.map(e => e.id);
   const [features, talents] = await Promise.all([
     prisma.hrEmployeeFeature.findMany({where: {employeeId: {in: ids}, category: {in: ["mental", "physical"]}}, select: {employeeId: true, value: true}}),
@@ -140,11 +140,11 @@ function computePlanMetrics(def: (typeof PLAN_SCENARIOS)[keyof typeof PLAN_SCENA
 }
 export async function listProductivity(actor: SessionUser) {
   requireAny(actor, ["hr:productivity:view", "hr:productivity:manage", "hr:productivity:approve"]);
-  const roster = await productivityRoster();
+  const roster = await productivityRoster(actor);
   const [okrs, plans, employees] = await Promise.all([
     prisma.hrOkr.findMany({orderBy: [{period: "desc"}, {createdAt: "desc"}], take: 200}),
     prisma.hrShiftPlan.findMany({orderBy: {createdAt: "desc"}, take: 50}),
-    prisma.hrEmployee.findMany({where: {active: true}, select: employeeOption, orderBy: {name: "asc"}}),
+    prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor)}, select: employeeOption, orderBy: {name: "asc"}}),
   ]);
   return {
     rows: plans,
@@ -159,14 +159,14 @@ export async function saveProductivity(actor: SessionUser, input: unknown, id?: 
   if (body.action === "approve") {
     requireAny(actor, ["hr:productivity:approve"]);
     const key = planKey(body.scenario);
-    const metrics = computePlanMetrics(PLAN_SCENARIOS[key], await productivityRoster());
+    const metrics = computePlanMetrics(PLAN_SCENARIOS[key], await productivityRoster(actor));
     const period = textField(body.period, "دوره برنامه‌ریزی", 60);
     return prisma.hrShiftPlan.upsert({where: {period}, create: {period, scenario: key, status: "APPROVED", metrics, approvedBy: actor.id, approvedAt: new Date(), createdBy: actor.id}, update: {scenario: key, status: "APPROVED", metrics, approvedBy: actor.id, approvedAt: new Date()}});
   }
   if (body.action === "plan") {
     requireAny(actor, ["hr:productivity:manage"]);
     const key = planKey(body.scenario);
-    const metrics = computePlanMetrics(PLAN_SCENARIOS[key], await productivityRoster());
+    const metrics = computePlanMetrics(PLAN_SCENARIOS[key], await productivityRoster(actor));
     const period = textField(body.period, "دوره برنامه‌ریزی", 60);
     return prisma.hrShiftPlan.upsert({where: {period}, create: {period, scenario: key, status: "DRAFT", metrics, createdBy: actor.id}, update: {scenario: key, metrics}});
   }

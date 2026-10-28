@@ -2,6 +2,31 @@ export const HR_REQUEST_KINDS = {LEAVE: "مرخصی", MISSION: "مأموریت",
 export const HR_REQUEST_STATUS = {PENDING: "در انتظار بررسی", APPROVED: "تأیید شده", REJECTED: "رد شده", CANCELLED: "لغو شده"};
 export const CONTRACT_TYPES = {FULL_TIME: "تمام‌وقت", PART_TIME: "پاره‌وقت", CONTRACT: "قراردادی", TEMPORARY: "موقت"};
 export const ATTENDANCE_STATUS = {PRESENT: "حاضر", ABSENT: "غایب", LEAVE: "مرخصی", MISSION: "مأموریت", REST: "استراحت"};
+// کارگزینی — kinds, statuses and windows, taken verbatim from the prototype
+// (`materials/itfco-portal(5).html`, TYPES / DOCS / KINDS / MILS / VETS / STATES).
+export const CONTRACT_KINDS = {PERMANENT: "دائم", PAYMANI: "پیمانی", ANNUAL: "قرارداد یک‌ساله", FIXED_TERM: "قرارداد موقت (مدت معین)", PROBATION: "آزمایشی (۳ ماه)", PROJECT: "پروژه‌ای", CONTRACTOR: "شرکتی (پیمانکار)"};
+export const CONTRACT_STATUS = {ACTIVE: "فعال", ENDED: "پایان‌یافته", TERMINATED: "خاتمهٔ همکاری"};
+export const DECREE_KINDS = {APPOINTMENT: "انتصاب / تغییر سمت", SALARY_INCREASE: "افزایش حقوق", JOB_GROUP: "تغییر گروه شغلی", TRANSFER: "انتقال به واحد دیگر", CONFIRMATION: "تثبیت / تبدیل وضعیت", RENEWAL: "حکم تمدید قرارداد", BONUS: "پاداش و کارانه", ANNUAL_RAISE: "افزایش سالانهٔ گروهی", TERMINATION: "خاتمهٔ همکاری"};
+export const DECREE_STATUS = {ISSUED: "صادرشده", NOTIFIED: "ابلاغ‌شده", CANCELLED: "لغوشده"};
+// The ten mandatory papers of a personnel file, in the prototype's order.
+export const FILE_DOCUMENTS = {ID_BOOK: "شناسنامه", NATIONAL_CARD: "کارت ملی", DEGREE: "مدرک تحصیلی", MILITARY: "کارت پایان خدمت / معافیت", PHOTO: "عکس پرسنلی", CLEARANCE: "گواهی عدم سوء‌پیشینه", INSURANCE: "شماره بیمه", MEDICINE: "فرم طب کار", CONTRACT: "قرارداد امضاشده", BANK: "شماره حساب"};
+export const DOCUMENT_STATUS = {PRESENT: "موجود", MISSING: "ناقص"};
+export const MILITARY_STATUS = {COMPLETED: "پایان خدمت", EXEMPT_MEDICAL: "معافیت پزشکی", EXEMPT_FAMILY: "معافیت کفالت", EXEMPT_EDUCATION: "معافیت تحصیلی", LIABLE_STUDENT: "مشمول (در حال تحصیل)", LIABLE_ABSENT: "مشمول (غایب)", NOT_SUBJECT: "مشمول نیست"};
+export const VETERAN_STATUS = {NONE: "ندارد", MARTYR_CHILD: "فرزند شهید", DISABLED_25: "جانباز ۲۵٪", FREED_POW: "آزاده", DISABLED_SPOUSE: "همسر جانباز"};
+export const EMPLOYMENT_STATES = {ACTIVE: "شاغل", MISSION: "مأموریت", UNPAID_LEAVE: "مرخصی بدون حقوق", MATERNITY_LEAVE: "مرخصی زایمان", SUSPENDED: "تعلیق"};
+// Expiry buckets: 60 days is "soon", 45 warns, 15 is a risk. Past the end date
+// the contract is expired and the person works without one.
+export const CONTRACT_WINDOWS = {notice: 60, warn: 45, risk: 15};
+// Minimum lawful base salary (ریال) used by the audit's pessimistic rule. The
+// prototype keeps it as a parameter of the payroll module; it lives here until
+// the payroll module owns it.
+export const MIN_BASE_SALARY = 120000000;
+// A decree that has been issued but not notified for this long is chased.
+export const DECREE_NOTIFY_DAYS = 3;
+// A file is "incomplete" below this percentage of mandatory documents.
+export const FILE_COMPLETENESS_FLOOR = 70;
+// An employment state other than ACTIVE is re-examined after this many days.
+export const LONG_INACTIVITY_DAYS = 60;
 export const SHIFT_KINDS = {MORNING: "صبح", EVENING: "عصر", NIGHT: "شب", REST: "استراحت", LEAVE: "مرخصی"};
 export const CANDIDATE_STAGES = {APPLIED: "دریافت رزومه", SCREENING: "بررسی اولیه", INTERVIEW: "مصاحبه", OFFERED: "پیشنهاد همکاری", HIRED: "استخدام شده", REJECTED: "رد شده"};
 export const FEEDBACK_KINDS = {SUGGESTION: "پیشنهاد بهبود", CRITICISM: "انتقاد", CONVERSATION: "درخواست گفتگو", TRAINING: "نیاز آموزشی", OTHER: "سایر"};

@@ -183,6 +183,12 @@ model HrEmployee {
   name          String
   userId        String?  @unique
   user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  // Tenant of the personnel file. Nullable so legacy rows survive an upgrade;
+  // `npm run backfill:hr-company` fills it from the user's company membership.
+  // The person's seat is not copied here: it is resolved through CompanyMember
+  // and PositionAssignment, so the chart stays the single source of truth.
+  companyId     String?
+  company       Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
   department    String
   jobTitle      String
   worksite      String
@@ -201,6 +207,19 @@ model HrEmployee {
   shifts        HrShift[]
   evaluations   HrEvaluation[]
   transfers     HrTransfer[]
+  // کارگزینی: the personnel file's legal papers.
+  contracts     HrContract[]
+  decrees       HrDecree[]
+  documents     HrDocument[]
+  // Facts the pessimistic file audit reads. They live on the file, not on the
+  // contract, because they describe the person, not one engagement.
+  nationalId      String    @default("")
+  birthDate       DateTime? @db.Date
+  militaryStatus  String    @default("NOT_SUBJECT")
+  veteranStatus   String    @default("NONE")
+  veteranVerified Boolean   @default(false)
+  employmentState String    @default("ACTIVE")
+  stateSince      DateTime? @db.Date
   responses     HrSurveyResponse[]
   feedback      HrFeedback[]
   acknowledgements HrAcknowledgement[]
@@ -208,6 +227,7 @@ model HrEmployee {
   talent        HrTalentReview?
   @@index([managerId, active])
   @@index([department, active])
+  @@index([companyId, active])
 }
 
 model HrRequest {
@@ -342,6 +362,109 @@ model HrTransfer {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   @@index([employeeId, status])
+}
+
+// کارگزینی: قرارداد. One row per engagement, kept after it ends — the file is a
+// ledger, not a single current value. `HrEmployee.contractType` stays what it
+// always was (full-time / part-time / temporary): the *arrangement*, a different
+// axis from the contract kind (دائم / پیمانی / یک‌ساله / …).
+model HrContract {
+  id         String @id @default(cuid())
+  companyId  String
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  employeeId String
+  employee   HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  // PERMANENT | PAYMANI | ANNUAL | FIXED_TERM | PROBATION | PROJECT | CONTRACTOR
+  kind       String
+  startDate  DateTime  @db.Date
+  // Null means "no end date" (دائم, پروژه‌ای open-ended).
+  endDate    DateTime? @db.Date
+  // ACTIVE | ENDED | TERMINATED
+  status     String   @default("ACTIVE")
+  baseSalary Int      @default(0) // Rial
+  renewals   Int      @default(0)
+  // Only for CONTRACTOR contracts: the contractor company whose crew this is.
+  contractorCompanyId String?
+  contractorCompany   HrContractorCompany? @relation(fields: [contractorCompanyId], references: [id], onDelete: SetNull)
+  note       String   @default("")
+  closedAt   DateTime?
+  closedReason String @default("")
+  createdById   String?
+  createdByName String @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  decrees    HrDecree[]
+  @@index([companyId, status, endDate])
+  @@index([employeeId, status])
+}
+
+// حکم: the signed paper behind a change in the personnel file. `notifiedAt` is
+// the moment the person was actually told; the audit chases decrees that were
+// issued and never notified.
+model HrDecree {
+  id          String @id @default(cuid())
+  companyId   String
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  employeeId  String
+  employee    HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  contractId  String?
+  contract    HrContract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
+  number      String // e.g. ح-۱۴۰۵-۱۱۰۰, unique inside the company
+  kind        String // APPOINTMENT | SALARY_INCREASE | ...
+  status      String @default("ISSUED") // ISSUED | CANCELLED
+  issuedAt    DateTime @default(now())
+  effectiveAt DateTime @db.Date
+  notifiedAt  DateTime?
+  signer      String @default("")
+  cosigner    String @default("")
+  baseSalary  Int    @default(0)
+  reason      String @default("")
+  createdById   String?
+  createdByName String @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@unique([companyId, number])
+  @@index([companyId, status, issuedAt])
+  @@index([employeeId, issuedAt])
+}
+
+// مدارک پرونده: the ten mandatory documents, one row per person and kind. A row
+// that does not exist is "missing" as far as the audit is concerned, which keeps
+// the table small and makes the checklist idempotent.
+model HrDocument {
+  id         String @id @default(cuid())
+  companyId  String
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  employeeId String
+  employee   HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  kind       String
+  status     String @default("MISSING") // PRESENT | MISSING
+  reference  String @default("") // serial number, archive file number, …
+  verifiedAt DateTime?
+  note       String @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  @@unique([employeeId, kind])
+  @@index([companyId, status])
+}
+
+// شرکت پیمانکار: a supplier company whose crew works on our site. Its own
+// contract expiry is the one date a dozen personnel files inherit.
+model HrContractorCompany {
+  id         String @id @default(cuid())
+  companyId  String
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name       String
+  contractNo String @default("")
+  startDate  DateTime? @db.Date
+  endDate    DateTime? @db.Date
+  active     Boolean @default(true)
+  note       String @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  contracts  HrContract[]
+  @@unique([companyId, name])
+  @@index([companyId, active])
 }
 
 model HrSurvey {
@@ -498,6 +621,11 @@ model Company {
   departments Department[]
   positions   Position[]
   positionAssignments PositionAssignment[]
+  employees   HrEmployee[]
+  hrContracts   HrContract[]
+  hrDecrees     HrDecree[]
+  hrDocuments   HrDocument[]
+  hrContractors HrContractorCompany[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }

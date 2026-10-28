@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { AccessError, hasPermission, textField } from "./access-policy";
+import { OrgHierarchyService, type OrgDb } from "./org-chart";
 import type { SessionUser } from "./session-types";
 
 export type HrDb = Prisma.TransactionClient;
@@ -18,16 +19,87 @@ export async function requireHr(session: SessionUser | null, keys?: string[]) {
   if (keys) requireAny(session, keys);
   return session;
 }
-export function employeeScope(actor: SessionUser, globalKeys: string[], teamKeys: string[] = [], selfKeys: string[] = []): Prisma.HrEmployeeWhereInput {
-  if (canAny(actor, globalKeys)) return {};
+/**
+ * The companies whose personnel files the actor may see at all.
+ *
+ * Personnel data belongs to a tenant, so an HR reader sees the files of the
+ * companies they are a member of — not every file in the database. A
+ * super administrator is unrestricted. Files with no tenant are still visible:
+ * they belong to no company, so they cannot cross a tenant boundary, and they
+ * are the ones `npm run backfill:hr-company` is meant to attribute. That window
+ * closes as soon as every file has a company.
+ */
+export async function actorCompanyIds(actor: SessionUser, db: OrgDb = prisma): Promise<string[]> {
+  const memberships = await db.companyMember.findMany({where: {userId: actor.id, active: true}, select: {companyId: true}});
+  return memberships.map(row => row.companyId);
+}
+
+export async function tenantWhere(actor: SessionUser, db: OrgDb = prisma): Promise<Prisma.HrEmployeeWhereInput> {
+  if (actor.role === "SUPER_ADMIN") return {};
+  return {OR: [{companyId: {in: await actorCompanyIds(actor, db)}}, {companyId: null}]};
+}
+
+/**
+ * Personnel files in the actor's management subtree.
+ *
+ * The reporting hierarchy is the authority: the subtree is read from the
+ * position chart (descendants of the actor's own seat). Only when the actor has
+ * no primary placement at all does this fall back to the legacy
+ * HrEmployee.managerId chain, so a company that has not built a chart keeps
+ * working exactly as before.
+ */
+export async function teamEmployeeIds(actor: SessionUser, db: OrgDb = prisma): Promise<string[]> {
+  const hierarchy = new OrgHierarchyService(db);
+  const memberships = await db.companyMember.findMany({where: {userId: actor.id, active: true}, select: {companyId: true}});
+  const tenant = await tenantWhere(actor, db);
+  const ids = new Set<string>();
+  let placed = false;
+  for (const {companyId} of memberships) {
+    if (!(await hierarchy.getPrimaryAssignment(companyId, actor.id))) continue;
+    placed = true;
+    const reports = await hierarchy.getDescendantUserIds(companyId, actor.id);
+    if (!reports.length) continue;
+    const rows = await db.hrEmployee.findMany({where: {active: true, userId: {in: reports}, ...tenant}, select: {id: true}});
+    rows.forEach(row => ids.add(row.id));
+  }
+  if (!placed) {
+    const legacy = await db.hrEmployee.findMany({where: {active: true, manager: {userId: actor.id, active: true}, ...tenant}, select: {id: true}});
+    legacy.forEach(row => ids.add(row.id));
+  }
+  return [...ids];
+}
+
+/**
+ * Unit and job title as the chart defines them for this person, or null when
+ * they hold no position. A placed person's file may not disagree with the
+ * chart, so callers use this instead of trusting the typed values.
+ */
+export async function seatSnapshot(db: OrgDb, userId: string, companyId: string | null): Promise<{positionId: string; department: string; jobTitle: string} | null> {
+  const assignment = await db.positionAssignment.findFirst({
+    where: {isActive: true, isPrimary: true, member: {active: true, user: {id: userId, active: true}}, ...(companyId ? {companyId} : {})},
+    select: {positionId: true, position: {select: {title: true, department: {select: {name: true}}}}},
+    orderBy: {startDate: "desc"},
+  });
+  return assignment ? {positionId: assignment.positionId, department: assignment.position.department.name, jobTitle: assignment.position.title} : null;
+}
+
+export async function employeeScope(actor: SessionUser, globalKeys: string[], teamKeys: string[] = [], selfKeys: string[] = [], db: OrgDb = prisma): Promise<Prisma.HrEmployeeWhereInput> {
+  const tenant = await tenantWhere(actor, db);
+  // A global key widens the *rows* to every file in the actor's companies, not
+  // to every file in the database: the tenant is not a permission.
+  if (canAny(actor, globalKeys)) return tenant;
   const OR: Prisma.HrEmployeeWhereInput[] = [];
-  if (canAny(actor, teamKeys)) OR.push({active: true, manager: {userId: actor.id, active: true}});
+  // An empty subtree still yields an empty set rather than denying the view:
+  // a supervisor with no reports sees an empty list, not a 403.
+  if (canAny(actor, teamKeys)) OR.push({id: {in: await teamEmployeeIds(actor, db)}, ...tenant});
+  // A self-scope is the one place the tenant cannot narrow anything: the person
+  // is the person, whatever company their file is filed under.
   if (canAny(actor, selfKeys)) OR.push({userId: actor.id, active: true});
   if (!OR.length) throw new AccessError(403, "مجوز مشاهده این بخش را ندارید");
   return {OR};
 }
 export async function scopedEmployee(db: HrDb, actor: SessionUser, id: unknown, globalKeys: string[], teamKeys: string[] = [], selfKeys: string[] = []) {
-  const employee = await db.hrEmployee.findFirst({where: {id: textField(id, "پرسنل", 100), ...employeeScope(actor, globalKeys, teamKeys, selfKeys)}});
+  const employee = await db.hrEmployee.findFirst({where: {id: textField(id, "پرسنل", 100), ...await employeeScope(actor, globalKeys, teamKeys, selfKeys, db)}});
   if (!employee) throw new AccessError(404, "پرونده پرسنلی یافت نشد یا خارج از حوزه دسترسی شماست");
   return employee;
 }

@@ -282,21 +282,27 @@ export class OrgHierarchyService {
   async syncManagerCache(companyId: string, positionId: string, db: OrgDb = this.db) {
     const position = await db.position.findFirst({
       where: {id: positionId, companyId},
-      select: {id: true, reportsToPositionId: true, directReports: {select: {id: true, reportsToPositionId: true}}},
+      select: {
+        id: true, title: true, reportsToPositionId: true,
+        department: {select: {name: true}},
+        directReports: {select: {id: true, title: true, reportsToPositionId: true, department: {select: {name: true}}}},
+      },
     });
     if (!position) return;
-    const seats = [position, ...position.directReports.map(r => ({id: r.id, reportsToPositionId: r.reportsToPositionId}))];
+    const seats = [position, ...position.directReports];
     for (const seat of seats) {
       const manager = seat.reportsToPositionId ? await this.primaryHolderMemberId(companyId, seat.reportsToPositionId, db) : null;
       const holders = await db.positionAssignment.findMany({
         where: activeHolderWhere(companyId, seat.id),
-        select: {memberId: true, isPrimary: true},
+        select: {memberId: true, isPrimary: true, member: {select: {userId: true}}},
       });
       for (const holder of holders.filter(h => h.isPrimary)) {
+        const effective = manager === holder.memberId ? null : manager;
         await db.companyMember.updateMany({
           where: {id: holder.memberId, companyId},
-          data: {managerId: manager === holder.memberId ? null : manager},
+          data: {managerId: effective},
         });
+        await this.applyHrSeatCache(db, companyId, holder.member.userId, effective, {department: seat.department.name, jobTitle: seat.title});
       }
     }
   }
@@ -305,22 +311,80 @@ export class OrgHierarchyService {
   async rebuildManagerCache(companyId: string, db: OrgDb = this.db) {
     const positions = await db.position.findMany({
       where: {companyId},
-      select: {id: true, reportsToPositionId: true, assignments: {where: {isActive: true, member: {active: true, user: {active: true}}}, select: {memberId: true, isPrimary: true}}},
+      select: {
+        id: true, title: true, reportsToPositionId: true, department: {select: {name: true}},
+        assignments: {where: {isActive: true, member: {active: true, user: {active: true}}}, select: {memberId: true, isPrimary: true, member: {select: {userId: true}}}},
+      },
     });
     const primaryHolder = new Map<string, string>();
     for (const p of positions) {
       const primary = p.assignments.find(a => a.isPrimary) ?? p.assignments[0];
       if (primary) primaryHolder.set(p.id, primary.memberId);
     }
+    // Resolve every manager user once: the personnel-file cache points at an
+    // HrEmployee id, not at a CompanyMember id.
+    const memberUser = new Map(positions.flatMap(p => p.assignments.map(a => [a.memberId, a.member.userId] as [string, string])));
+    const profileOf = await this.hrProfileIds([...new Set(memberUser.values())], db);
     for (const p of positions) {
       const manager = p.reportsToPositionId ? primaryHolder.get(p.reportsToPositionId) ?? null : null;
       for (const assignment of p.assignments.filter(a => a.isPrimary)) {
+        const effective = manager === assignment.memberId ? null : manager;
         await db.companyMember.updateMany({
           where: {id: assignment.memberId, companyId},
-          data: {managerId: manager === assignment.memberId ? null : manager},
+          data: {managerId: effective},
         });
+        await this.writeHrSeat(db, companyId, assignment.member.userId, effective, memberUser, profileOf, {department: p.department.name, jobTitle: p.title});
       }
     }
+  }
+
+  /** HrEmployee id for each user, so the cache can point at a personnel file. */
+  private async hrProfileIds(userIds: string[], db: OrgDb): Promise<Map<string, string>> {
+    if (!userIds.length) return new Map();
+    const rows = await db.hrEmployee.findMany({where: {userId: {in: userIds}}, select: {id: true, userId: true}});
+    return new Map(rows.filter(r => r.userId).map(r => [r.userId!, r.id]));
+  }
+
+  private async writeHrSeat(db: OrgDb, companyId: string, userId: string, managerMemberId: string | null, memberUser: Map<string, string>, profileOf: Map<string, string>, seat: {department: string; jobTitle: string}) {
+    const managerUserId = managerMemberId ? memberUser.get(managerMemberId) : null;
+    const managerProfileId = managerUserId ? profileOf.get(managerUserId) ?? null : null;
+    // A file belongs to one company; a tenant-less file is still upgraded in place.
+    await db.hrEmployee.updateMany({
+      where: {userId, OR: [{companyId}, {companyId: null}]},
+      data: {managerId: managerProfileId, department: seat.department, jobTitle: seat.jobTitle},
+    });
+  }
+
+  /**
+   * Refresh the personnel-file cache for one person after a placement or
+   * reporting-line change. Same contract as CompanyMember.managerId: the
+   * manager, the unit and the job title are copies of the chart.
+   */
+  private async applyHrSeatCache(db: OrgDb, companyId: string, userId: string, managerMemberId: string | null, seat: {department: string; jobTitle: string}) {
+    const ids = [userId, ...(managerMemberId ? [managerMemberId] : [])];
+    const members = await db.companyMember.findMany({where: {id: {in: ids}, companyId}, select: {id: true, userId: true}});
+    const memberUser = new Map(members.map(m => [m.id, m.userId]));
+    const profileOf = await this.hrProfileIds([...new Set(memberUser.values())], db);
+    await this.writeHrSeat(db, companyId, userId, managerMemberId, memberUser, profileOf, seat);
+  }
+
+  /**
+   * Refresh every personnel file holding a seat in this department after the
+   * department is renamed. Department names, like manager and job title, are
+   * read from the chart.
+   */
+  async syncDepartmentCache(companyId: string, departmentId: string, db: OrgDb = this.db) {
+    const department = await db.department.findFirst({where: {id: departmentId, companyId}, select: {name: true}});
+    if (!department) return;
+    const positions = await db.position.findMany({where: {companyId, departmentId}, select: {id: true}});
+    if (!positions.length) return;
+    const assignments = await db.positionAssignment.findMany({
+      where: {companyId, positionId: {in: positions.map(p => p.id)}, isActive: true, isPrimary: true},
+      select: {member: {select: {userId: true}}},
+    });
+    const userIds = [...new Set(assignments.map(a => a.member.userId))];
+    if (!userIds.length) return;
+    await db.hrEmployee.updateMany({where: {userId: {in: userIds}, OR: [{companyId}, {companyId: null}]}, data: {department: department.name}});
   }
 
   private async nextManager(companyId: string, holder: HolderRef): Promise<HolderRef | null> {

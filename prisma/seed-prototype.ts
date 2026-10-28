@@ -8,6 +8,8 @@ import manifest from "./prototype-access.json";
 import {PERMISSIONS, PERMISSION_BY_KEY, SUBSYSTEMS} from "../app/lib/access-catalog";
 import {PROTOTYPE_ROLE_NAMES, prototypeCompanyPermissions, prototypePermissions, type PrototypeRole} from "../app/lib/prototype-policy";
 import {COMPANY_PERMISSIONS, defaultSettings} from "../app/lib/workflow/types";
+import {buildPrototypeChart} from "./prototype-org";
+import {seedPrototypeFiles} from "./prototype-files";
 
 const COMPANY = {slug: "itfco", name: "شرکت هوشمند فناوران برتر ایرانیان"};
 export const PROTOTYPE_IMPORT_TARGET = `itfco-prototype-access-v${manifest.version}`;
@@ -49,7 +51,7 @@ export async function seedPrototypeAccess(db: PrismaClient, options: Options = {
   return db.$transaction(async tx => {
     const company = await tx.company.upsert({where: {slug: COMPANY.slug}, create: {...COMPANY, settings: defaultSettings() as unknown as Prisma.InputJsonValue}, update: {}});
     const previousImport = await tx.companyAudit.findFirst({where: {companyId: company.id, action: "prototype.import", target: PROTOTYPE_IMPORT_TARGET}});
-    const report = {companyId: company.id, createdUsers: 0, existingUsers: 0, createdRoles: 0, createdGroups: 0, createdMemberships: 0, createdProfiles: 0, enabledModules: [] as string[]};
+    const report = {companyId: company.id, createdUsers: 0, existingUsers: 0, createdRoles: 0, createdGroups: 0, createdMemberships: 0, createdProfiles: 0, createdPositions: 0, createdContracts: 0, createdDecrees: 0, createdDocuments: 0, createdContractors: 0, enabledModules: [] as string[]};
     const subsystemIds = new Map<string, string>(), permissionIds = new Map<string, string>();
     for (const [sortOrder, subsystem] of SUBSYSTEMS.entries()) {
       const row = await tx.subsystem.upsert({where: {key: subsystem.key}, create: {key: subsystem.key, title: subsystem.title, description: subsystem.description, enabled: subsystem.enabled, sortOrder, dependencies: [...subsystem.dependencies]}, update: {}});
@@ -88,7 +90,6 @@ export async function seedPrototypeAccess(db: PrismaClient, options: Options = {
       groups.set(key, roleGroups);
     }
     const users = new Map<string, string>(), members = new Map<string, string>(), profiles = new Map<string, string>();
-    const newMembers = new Set<string>(), newProfiles = new Set<string>();
     const createdCredentials: {sourceId: string; name: string; email: string; role: string; password: string}[] = [];
     for (const account of manifest.accounts) {
       const key = account.roleKey as PrototypeRole;
@@ -103,7 +104,7 @@ export async function seedPrototypeAccess(db: PrismaClient, options: Options = {
       let member = await tx.companyMember.findUnique({where: {companyId_userId: {companyId: company.id, userId: user.id}}});
       if (!member) {
         member = await tx.companyMember.create({data: {companyId: company.id, userId: user.id, active: user.active, roles: {create: {roleId: roles.get(key)!}}}});
-        newMembers.add(account.sourceId); report.createdMemberships++;
+        report.createdMemberships++;
         await tx.userGroup.createMany({data: groups.get(key)!.map(groupId => ({userId: user!.id, groupId})), skipDuplicates: true});
       }
       members.set(account.sourceId, member.id);
@@ -113,15 +114,23 @@ export async function seedPrototypeAccess(db: PrismaClient, options: Options = {
       if (!profile && account.startDate) {
         const personnelCode = `ITFCO-${account.sourceId}`;
         if (await tx.hrEmployee.findUnique({where: {personnelCode}})) throw new Error(`Personnel code already belongs to another account: ${personnelCode}`);
-        profile = await tx.hrEmployee.create({data: {personnelCode, userId: user.id, name: account.name, department: account.department, jobTitle: account.jobTitle, worksite: account.worksite, phone: account.phone, education: account.education, startDate: new Date(`${account.startDate}T00:00:00.000Z`), contractType: account.prototypeContractType === "دائم" ? "FULL_TIME" : account.prototypeContractType?.startsWith("آزمایشی") ? "TEMPORARY" : "CONTRACT", active: user.active}});
-        newProfiles.add(account.sourceId); report.createdProfiles++;
+        profile = await tx.hrEmployee.create({data: {personnelCode, userId: user.id, companyId: company.id, name: account.name, department: account.department, jobTitle: account.jobTitle, worksite: account.worksite, phone: account.phone, education: account.education, startDate: new Date(`${account.startDate}T00:00:00.000Z`), contractType: account.prototypeContractType === "دائم" ? "FULL_TIME" : account.prototypeContractType?.startsWith("آزمایشی") ? "TEMPORARY" : "CONTRACT", active: user.active}});
+        report.createdProfiles++;
       }
-      if (profile) profiles.set(account.sourceId, profile.id);
+      if (profile) {
+        // Re-running against an older database fills the tenant without touching anything else.
+        if (!profile.companyId) await tx.hrEmployee.update({where: {id: profile.id}, data: {companyId: company.id}});
+        profiles.set(account.sourceId, profile.id);
+      }
     }
-    for (const account of manifest.accounts) if (account.managerSourceId) {
-      if (newMembers.has(account.sourceId)) await tx.companyMember.update({where: {id: members.get(account.sourceId)!}, data: {managerId: members.get(account.managerSourceId)!}});
-      if (newProfiles.has(account.sourceId) && profiles.has(account.managerSourceId)) await tx.hrEmployee.update({where: {id: profiles.get(account.sourceId)!}, data: {managerId: profiles.get(account.managerSourceId)!}});
-    }
+    // The roster becomes a real chart; the manager, unit and title on the member
+    // and personnel-file records are caches that the chart writes.
+    const chart = await buildPrototypeChart(tx, company.id, manifest.accounts, members);
+    report.createdPositions = chart.positions;
+    // کارگزینی: contracts, one decree and the document checklist for every file
+    // the import created. Idempotent, so a re-run only fills what is missing.
+    const files = await seedPrototypeFiles(tx, company.id, manifest.accounts, profiles);
+    report.createdContracts = files.contracts; report.createdDecrees = files.decrees; report.createdDocuments = files.documents; report.createdContractors = files.contractors;
     await tx.companyAudit.create({data: {companyId: company.id, actorId: "prototype-import", actorName: "ورود اطلاعات نمونه پرتال", action: "prototype.import", target: PROTOTYPE_IMPORT_TARGET, detail: JSON.stringify({...report, source: manifest.source, sourceSha256: manifest.sourceSha256})}});
     return {report, createdCredentials, accounts: manifest.accounts.map(a => ({...a, userId: users.get(a.sourceId)!, memberId: members.get(a.sourceId)!}))};
   }, {isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 120000});

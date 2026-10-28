@@ -58,7 +58,7 @@ export async function submitSurvey(actor: SessionUser, id: string, input: unknow
   });
 }
 export async function surveyResults(actor: SessionUser, mine: boolean) {
-  const scope = mine ? employeeScope(actor, [], [], ["hr:results:self"]) : employeeScope(actor, ["hr:questionnaires:view", "hr:questionnaires:manage"]);
+  const scope = await (mine ? employeeScope(actor, [], [], ["hr:results:self"]) : employeeScope(actor, ["hr:questionnaires:view", "hr:questionnaires:manage"]));
   return {rows: await prisma.hrSurveyResponse.findMany({where: {employee: scope}, include: {employee: {select: employeeOption}, survey: {select: {id: true, title: true, questions: true}}}, orderBy: {submittedAt: "desc"}, take: 200})};
 }
 export async function listFeedback(actor: SessionUser, mine: boolean) {
