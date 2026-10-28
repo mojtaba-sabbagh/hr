@@ -15,7 +15,7 @@ export default function AppShell({session, title, section = "پرتال سازم
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [date, setDate] = useState("");
-  useEffect(() => {setDate(new Intl.DateTimeFormat("fa-IR", {weekday: "long", day: "numeric", month: "long", year: "numeric"}).format(new Date()));}, []);
+  useEffect(() => {setDate(new Intl.DateTimeFormat("fa-IR", {weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Tehran"}).format(new Date()));}, []);
   useEffect(() => {setOpen(false);}, [active]);
   useEffect(() => {
     if (!open) return;
@@ -35,7 +35,7 @@ export default function AppShell({session, title, section = "پرتال سازم
     {open && <button className="sidebar-backdrop" aria-label="بستن منو" onClick={() => setOpen(false)}/>}
     <aside className={`sidebar ${open ? "is-open" : ""}`} aria-label="منوی اصلی">
       <button className="icon-button sidebar-close" onClick={() => setOpen(false)} aria-label="بستن منو"><X size={20}/></button>
-      <Link className="brand" href="/" aria-label="صفحه اصلی پرتال"><img src="/brand/itfco-logo.webp" alt="شرکت هوشمند فناوران برتر ایرانیان" width={172} height={105}/><strong>پرتال جامع معاونت توسعه</strong><span>همراهِ مسیر رشد سازمان</span></Link>
+      <Link className="brand" href="/" aria-label="صفحه اصلی پرتال"><img src="/brand/itfco-logo.webp" alt="شرکت هوشمند فناوران برتر ایرانیان" width={172} height={105}/><strong>پرتال جامع توسعه و پشتیبانی</strong><span>همراهِ مسیر رشد سازمان</span></Link>
       <div className="nav-caption">{section}</div>
       <nav>{items.map(({id, label, href, onClick, icon: Icon}) => {
         const contents = <><Icon size={19}/><span>{label}</span>{active === id && <span className="nav-dot"/>}</>;
@@ -50,7 +50,7 @@ export default function AppShell({session, title, section = "پرتال سازم
         <div className="topbar-actions"><span className="topbar-date">{date}</span>{actions}<div className="user-chip"><span className="avatar">{session.name.trim().slice(0, 1)}</span><div><strong>{session.name}</strong><span>{roleName(session.role)}</span></div></div><button className="icon-button logout-button" onClick={() => void logout()} disabled={busy} aria-label="خروج از حساب" title="خروج از حساب"><LogOut size={18}/><span>{busy ? "خروج…" : "خروج"}</span></button></div>
       </header>
       <main className="page-content">{error && <div role="alert" className="feedback error">{error}</div>}{children}</main>
-      <footer className="app-footer"><span>شرکت هوشمند فناوران برتر ایرانیان</span><Link href="/">پرتال جامع معاونت توسعه <ArrowUpLeft size={13}/></Link></footer>
+      <footer className="app-footer"><span>شرکت هوشمند فناوران برتر ایرانیان</span><Link href="/">پرتال جامع توسعه و پشتیبانی <ArrowUpLeft size={13}/></Link></footer>
     </div>
   </div>;
 }

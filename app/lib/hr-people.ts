@@ -16,7 +16,8 @@ export async function saveEmployee(actor: SessionUser, input: unknown, id?: stri
   const userId = optionalText(body.userId, "حساب کاربری", 100) || null;
   const managerId = optionalText(body.managerId, "سرپرست", 100) || null;
   return prisma.$transaction(async tx => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(72634109)`;
+    // pg_advisory_xact_lock returns void, which Prisma cannot deserialize; project a real column instead.
+    await tx.$queryRaw`SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(72634109)) AS advisory_lock`;
     const existing = id ? await tx.hrEmployee.findUnique({where: {id}}) : null;
     if (id && !existing) throw new AccessError(404, "پرونده یافت نشد");
     if (userId) {

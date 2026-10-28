@@ -39,6 +39,7 @@ model User {
   adminScopes         SubsystemAdminScope[]
   groupMemberships    UserGroup[]
   hrProfile           HrEmployee?
+  companyMemberships  CompanyMember[]
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 }
@@ -203,6 +204,8 @@ model HrEmployee {
   responses     HrSurveyResponse[]
   feedback      HrFeedback[]
   acknowledgements HrAcknowledgement[]
+  features      HrEmployeeFeature[]
+  talent        HrTalentReview?
   @@index([managerId, active])
   @@index([department, active])
 }
@@ -412,4 +415,252 @@ model HrNotification {
   readAt      DateTime?
   createdAt   DateTime @default(now())
   @@index([recipientId, readAt, createdAt])
+}
+
+// بانک ویژگی‌های فردی: هر ردیف یک شاخص پایش‌شده برای یک نیرو (۰ تا ۱۰۰).
+model HrEmployeeFeature {
+  id            String   @id @default(cuid())
+  employeeId    String
+  employee      HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  category      String
+  item          String
+  value         Int
+  previousValue Int?
+  note          String   @default("")
+  recordedBy    String
+  updatedAt     DateTime @updatedAt
+  @@unique([employeeId, category, item])
+  @@index([category, item])
+}
+
+// نقشه استعداد: عملکرد × پتانسیل، آمادگی ارتقا و مسیر شغلی پیشنهادی.
+model HrTalentReview {
+  id          String   @id @default(cuid())
+  employeeId  String   @unique
+  employee    HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  performance Int      @default(60)
+  potential   Int      @default(1)
+  promoReady  Boolean  @default(false)
+  targetRole  String   @default("")
+  status      String   @default("OPEN")
+  careerPath  Json     @default("[]")
+  notes       String   @default("")
+  updatedBy   String
+  updatedAt   DateTime @updatedAt
+  @@index([status])
+}
+
+// اهداف و نتایج کلیدی (OKR) سازمانی برای پایش بهره‌وری.
+model HrOkr {
+  id         String   @id @default(cuid())
+  owner      String
+  objective  String
+  keyResult  String
+  progress   Int      @default(0)
+  period     String
+  status     String   @default("ACTIVE")
+  createdBy  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  @@index([period, status])
+}
+
+// سناریوی چیدمان شیفت سه‌ماهه با معیارهای مالی و ریسک نیروی انسانی.
+model HrShiftPlan {
+  id         String   @id @default(cuid())
+  period     String   @unique
+  scenario   String
+  status     String   @default("DRAFT")
+  metrics    Json
+  approvedBy String?
+  approvedAt DateTime?
+  createdBy  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  @@index([status])
+}
+
+// Company workspaces are isolated from the legacy, installation-wide HR records.
+model Company {
+  id          String @id @default(cuid())
+  slug        String @unique
+  name        String
+  active      Boolean @default(true)
+  settings    Json
+  revision    Int @default(1)
+  members     CompanyMember[]
+  roles       CompanyRole[]
+  forms       BuilderForm[]
+  workflows   BuilderWorkflow[]
+  instances   WorkflowInstance[]
+  notices     WorkflowNotice[]
+  audits      CompanyAudit[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model CompanyMember {
+  id        String @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  active    Boolean @default(true)
+  managerId String?
+  roles     CompanyMemberRole[]
+  createdAt DateTime @default(now())
+  @@unique([companyId, userId])
+  @@index([companyId, active])
+}
+
+model CompanyRole {
+  id          String @id @default(cuid())
+  companyId   String
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name        String
+  permissions Json
+  members     CompanyMemberRole[]
+  createdAt   DateTime @default(now())
+  @@unique([companyId, name])
+}
+
+model CompanyMemberRole {
+  memberId String
+  member   CompanyMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  roleId   String
+  role     CompanyRole @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  @@id([memberId, roleId])
+}
+
+model BuilderForm {
+  id          String @id @default(cuid())
+  companyId   String
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  code        String
+  title       String
+  description String @default("")
+  category    String @default("core")
+  schema      Json
+  submitRoleIds Json
+  archived    Boolean @default(false)
+  revision    Int @default(1)
+  workflow    BuilderWorkflow?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@unique([companyId, code])
+  @@index([companyId, category])
+}
+
+model BuilderWorkflow {
+  id               String @id @default(cuid())
+  companyId        String
+  company          Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  formId           String @unique
+  form             BuilderForm @relation(fields: [formId], references: [id], onDelete: Restrict)
+  name             String
+  config           Json
+  revision         Int @default(1)
+  publishedVersion Int?
+  versions         WorkflowVersion[]
+  updatedAt        DateTime @updatedAt
+  @@index([companyId])
+}
+
+model WorkflowVersion {
+  id          String @id @default(cuid())
+  workflowId  String
+  workflow    BuilderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Restrict)
+  version     Int
+  config      Json
+  formSchema  Json
+  formTitle   String
+  formCode    String
+  publishedBy String
+  createdAt   DateTime @default(now())
+  instances   WorkflowInstance[]
+  @@unique([workflowId, version])
+}
+
+model WorkflowInstance {
+  id            String @id @default(cuid())
+  number        Int @unique @default(autoincrement())
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  versionId     String
+  version       WorkflowVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  title         String
+  category      String
+  submittedBy   String
+  submitterName String
+  payload       Json
+  parameters    Json
+  priority      String @default("normal")
+  status        String @default("running")
+  currentNodeId String?
+  returnNodeId  String?
+  revision      Int @default(1)
+  round         Int @default(0)
+  tasks         WorkflowTask[]
+  actions       WorkflowAction[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  completedAt   DateTime?
+  @@index([companyId, submittedBy, createdAt])
+  @@index([companyId, status])
+}
+
+model WorkflowTask {
+  id         String @id @default(cuid())
+  instanceId String
+  instance   WorkflowInstance @relation(fields: [instanceId], references: [id], onDelete: Restrict)
+  nodeId     String
+  label      String
+  round      Int
+  assignedTo String
+  status     String @default("pending")
+  dueAt      DateTime
+  createdAt  DateTime @default(now())
+  completedAt DateTime?
+  @@unique([instanceId, round, assignedTo])
+  @@index([assignedTo, status, dueAt])
+}
+
+model WorkflowAction {
+  id         String @id @default(cuid())
+  instanceId String
+  instance   WorkflowInstance @relation(fields: [instanceId], references: [id], onDelete: Restrict)
+  nodeId     String
+  nodeLabel  String
+  actorId    String
+  actorName  String
+  action     String
+  comment    String @default("")
+  createdAt  DateTime @default(now())
+  @@index([instanceId, createdAt])
+}
+
+model WorkflowNotice {
+  id          String @id @default(cuid())
+  companyId   String
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  recipientId String
+  instanceId  String
+  title       String
+  body        String
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+  @@index([companyId, recipientId, readAt])
+}
+
+model CompanyAudit {
+  id         String @id @default(cuid())
+  companyId  String
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  actorId    String
+  actorName  String
+  action     String
+  target     String
+  detail     String
+  createdAt  DateTime @default(now())
+  @@index([companyId, createdAt])
 }

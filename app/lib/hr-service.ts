@@ -5,6 +5,7 @@ import { canAny, dateField, employeeInclude, employeeScope, requireAny, requireH
 import { listAttendance, listEvaluations, listPeople, listShifts, myProfile, saveAttendance, saveEmployee, saveEvaluation, saveShift, updateMyProfile } from "./hr-people";
 import { createHrRequest, decideHrRequest, listHrRequests, listRecruitment, listTransfers, saveCandidate, saveJob, saveTransfer } from "./hr-workflows";
 import { listFeedback, listRegulations, listSurveys, saveFeedback, saveRegulation, saveSurvey, submitSurvey, surveyResults } from "./hr-engagement";
+import { listFeatures, listProductivity, listPromotion, myFeatures, saveFeature, saveProductivity, saveTalent } from "./hr-talent";
 
 async function dashboard(actor: SessionUser) {
   const profile = await prisma.hrEmployee.findUnique({where: {userId: actor.id}, include: employeeInclude});
@@ -56,6 +57,10 @@ export async function readHr(session: SessionUser | null, resource: string, quer
     case "voice": return listFeedback(actor, true);
     case "feedback": return listFeedback(actor, false);
     case "regulations": return listRegulations(actor);
+    case "features": return listFeatures(actor, query);
+    case "my-features": return myFeatures(actor);
+    case "promotion": return listPromotion(actor);
+    case "productivity": return listProductivity(actor);
     case "reports": return getHrReport(actor, false, query);
     case "team-reports": return getHrReport(actor, true, query);
     case "inbox": return {rows: await prisma.hrNotification.findMany({where: {recipientId: actor.id}, orderBy: {createdAt: "desc"}, take: 200})};
@@ -79,6 +84,9 @@ export async function writeHr(session: SessionUser | null, resource: string, inp
     case "voice": if (id) throw new AccessError(400, "پیام ارسال‌شده قابل ویرایش نیست"); return saveFeedback(actor, input);
     case "feedback": if (!id) throw new AccessError(400, "پیام انتخاب کنید"); return saveFeedback(actor, input, id);
     case "regulations": return saveRegulation(actor, input, id);
+    case "features": return saveFeature(actor, input);
+    case "promotion": return saveTalent(actor, input);
+    case "productivity": return saveProductivity(actor, input, id);
     case "inbox": {
       const body = bodyObject(input);
       if (!id && body.all !== true) throw new AccessError(400, "اعلان انتخاب کنید");
