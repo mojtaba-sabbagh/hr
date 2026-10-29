@@ -63,6 +63,23 @@ Every new table carries `companyId`, but nobody submits it: `tenantOf` derives i
 
 Numbers are `ح-<Persian year>-<serial>` from 1001 up, per company, using ICU for the year (no calendar arithmetic in the code). Issued decrees are signed papers: once `notifiedAt` is set they are frozen (409 «حکم اصلاحی صادر کنید»). ابلاغ is the moment the person is actually told; it closes the audit finding and is idempotent. The audit waits three days (`DECREE_NOTIFY_DAYS`) before complaining.
 
+## The حکم is a layout the organization owns
+
+A حکم is not a form with fixed fields. Its item list («حقوق، مزایا و فوق‌العاده‌ها») is the organization's own vocabulary: one employer pays پایه استحقاقی and فوق‌العاده جذب, another pays a different set entirely. So the catalogue is data:
+
+- `HrDecreeTemplate` — the layout: ministry line, unit line, title, intro, footer.
+- `HrDecreeItemRule` — the rows the organization *could* pay: a stable latin `key`, the printed `label`, `kind` (EARNING / DEDUCTION), `defaultAmount`, `required`.
+- `HrDecreeItem` — what one decree *does* pay, copied at issue time **including the label and the letter**. Renaming or deleting a catalogue row afterwards cannot restyle a paper that has already been signed and handed to a person.
+- `HrHokmProfile` — the facts the paper prints that the personnel file never needed (نام پدر، شناسنامه، مدرک، پست سازمانی، سوابق). One row per file, edited next to the file, scoped by it. A field left out of a save keeps its old value, so one tab can be saved without wiping the rest.
+
+Rows are lettered الف، ب، پ … by position; past ی they are numbered. Totals are `{earnings, deductions, net}`, and when a decree is issued with rows but no `baseSalary`, the ledger is set to the جمع — the paper's own figure is the honest one. Without a template a decree can carry no rows at all (400): the catalogue is the authority for what may be printed.
+
+`app/lib/hokm-items.ts` holds the row rules (`normalizeItems`, `itemTotals`, `letterFor`, `numberIn`) as pure functions; `app/lib/amount-words.ts` spells the total in Persian, where ۱۰۰۰ is a bare «هزار» but ۱۰⁶ is «یک میلیون».
+
+## Printing a حکم
+
+`/hr/decree/[id]` is a server component over `hokmSheet(actor, id)` — one read, the same `employeeScope` as the list, the signer's image fetched from their account at print time. It renders an A4 `.paper` (210×297mm) with `@page {size: A4; margin: 12mm}`, so the screen preview *is* the printed page; «چاپ / ذخیره به‌صورت PDF» is the browser's own dialog. No PDF library is involved, and a decree whose signer has not drawn a signature prints a blank line rather than failing.
+
 ## The fifteen rules
 
 `app/lib/hr-file-audit.ts` is pure: no database, no clock of its own (`today` is passed in), no notifications. The service gathers facts, calls it, and stores nothing — a finding is a conclusion about a file as it is now, so it can never describe a file that has since changed shape.
@@ -89,34 +106,51 @@ Summary: `{risk, warn, people, files, health}`, where `health` is the share of f
 
 Rule 15 takes its findings from `options.safety` because the HSE violation model does not exist yet; when it does, `fileAudit` will query it and the signature stays the same.
 
-## Service API — `app/lib/hr-contracts.ts`
+## Service API — `app/lib/hr-contracts.ts`, `app/lib/hr-hokm.ts`
 
 `listContracts`, `saveContract`, `renewContract`, `terminateContract`, `listDecrees`, `saveDecree`, `notifyDecree`, `listDocuments`, `saveDocument`, `saveFileFacts`, `listContractors`, `saveContractor`, `fileAudit`, `contractStats`.
 
-Wired into `readHr`/`writeHr` as `contracts`, `decrees`, `documents`, `file-audit`, `contractors`, and `file-facts` (a PATCH that records the seven file facts). Renew, terminate and notify arrive as `{action: "renew" | "terminate" | "notify"}` on the row id, the same dispatch pattern the rest of HR uses.
+`hr-hokm.ts` owns the template catalogue: `listTemplates`, `saveTemplate`, `templateBoard` (the picker the حکم dialog opens), `listHokmProfiles`, `saveHokmProfile`, `hokmSheet`. The dependency runs one way — `hr-contracts` imports `replaceDecreeItems` and `itemTotals` from `hr-hokm`, never the reverse.
+
+Wired into `readHr`/`writeHr` as `contracts`, `decrees`, `decree-templates`, `hokm-board`, `hokm-profiles`, `documents`, `file-audit`, `contractors`, and `file-facts` (a PATCH that records the seven file facts). Renew, terminate and notify arrive as `{action: "renew" | "terminate" | "notify"}` on the row id, the same dispatch pattern the rest of HR uses. `hokm-profiles/{id}` is keyed by the personnel file, not by the profile row, so a save is an upsert.
+
+## Signatures — امضای من
+
+`User.signatureImage` holds one mark per account, reused wherever the portal puts a person's signature on paper (a حکم's signer line, a صورت‌جلسه's signature block). The rules are pure and live in `app/lib/signature-image.ts`: PNG only, ≤ 400 KB, ≤ 1200 px a side, re-encoded from the decoded bytes so the data URL cannot smuggle another MIME type. There is deliberately no permission key — the signature is the person's own, so whoever holds the account may set it and only their own (`/api/hr/signature`).
+
+How each paper treats the mark differs, on purpose. A حکم is a *reference*: the print page fetches the signer's current image, so a re-drawn signature updates a reprint. A صورت‌جلسه is the *record*: the image is copied into `HrMinuteSignature.image` at the instant it is given, so the signed paper keeps the mark that was actually put on it.
 
 ## Permissions and views
 
-`hr:contracts:{view,manage}`, `hr:decrees:{view,manage,notify}`, `hr:documents:{view,manage}`, `hr:file-audit:view`, `hr:contractors:{view,manage}`, `hr:team-files:view`. Group templates: **کارگزینی منابع انسانی** (the whole desk) and **کارگزینی تیم** (team files, read-only). `hr-supervisor` already picks up `hr:team-files:view` through its `hr:team*` rule.
+`hr:contracts:{view,manage}`, `hr:decrees:{view,manage,notify}`, `hr:decree-templates:manage`, `hr:documents:{view,manage}`, `hr:file-audit:view`, `hr:contractors:{view,manage}`, `hr:team-files:view`. Group templates: **کارگزینی منابع انسانی** (the whole desk) and **کارگزینی تیم** (team files, read-only). `hr-supervisor` already picks up `hr:team-files:view` through its `hr:team*` rule; `hr:decree-templates` joined the کارگزینی regex.
 
-Views: `contracts` (قرارداد و حکم), `decrees`, `documents`, `file-audit`, `contractors`, `team-files`. Each audit finding links to the page where it is fixed, derived from `finding.action` (`notify:<number>` goes to decrees, `renew`/`probation` to contracts, `documents`/`contractors` where they say, `profile` to the people page).
+Views: `contracts` (قرارداد و حکم), `decrees`, `decree-templates`, `hokm-profiles`, `documents`, `file-audit`, `contractors`, `team-files`. Each audit finding links to the page where it is fixed, derived from `finding.action` (`notify:<number>` goes to decrees, `renew`/`probation` to contracts, `documents`/`contractors` where they say, `profile` to the people page). The decrees list carries «جمع حکم» and a «چاپ حکم» link to `/hr/decree/[id]`.
 
 ## Seed
 
 `prisma/prototype-files.ts` turns the prototype roster's own facts — «دائم / پیمانی / یک‌ساله / آزمایشی» plus a start date — into an honest ledger: contract periods follow from the start date to today, past periods are `ENDED`, the one covering today is `ACTIVE`, and a دائم engagement is a single open row. It also writes one decree per file (every ninth still un-notified, so the «حکم ابلاغ‌نشده» rule has something true to point at), 6–10 of the ten papers (so completion percentages differ), and two contractor companies. The national ID is derived from the account id with a valid checksum rather than left blank. It runs inside the prototype import and is idempotent: a file that already has a contract is left alone.
 
+`prisma/seed.ts` adds the demo the papers need: one حکم layout («حکم کارگزینی شرکت») with four lettered item rules, the مشخصات حکم of the director, and one issued decree whose جمع is ۱٫۲۰۳٫۲۹۵٫۷۱۵ ریال — the reference paper's own figure, spelled on the page. Every block is guarded (`findFirst`/`findUnique` before create), so a second run keeps whatever the administrator has since edited.
+
 ## Tests
 
 `tests/hr-file-audit.test.cjs` — the rules, no database, 17 tests: every rule with a positive and a negative case, the expiry buckets, the national-ID checksum including Persian digits, the 70% floor, the health index.
 
+`tests/hr-hokm-rules.test.cjs` — the pure layer of حکم and امضا, no database: the amount in words (including the reference total) and its rejections, the row lettering, `normalizeItems` against a catalogue, the totals, and every signature rejection (not a PNG, wrong MIME, oversized).
+
 `tests/hr-contracts.test.cjs` — the service against a disposable schema: tenant derivation and 404 for a foreign file, one-active-contract, renewal and termination, the 90-day probation, decree numbering/notification/freeze, the document checklist, a live audit over the database, and the team scope coming from the chart rather than the drifted `HrEmployee.managerId` cache.
+
+`tests/hr-hokm.test.cjs` — the same schema pattern: templates unique per company and scoped to it, decree rows copied from the catalogue with their labels and letters, the جمع and the spelled amount, the snapshot surviving a catalogue edit, the signer's image, and مشخصات حکم saving one tab at a time.
 
 ```bash
 npx prisma generate
 npx prisma migrate deploy
 npx tsc --noEmit
+npm run test:hokm-rules
 npm run test:file-audit
 npm run test:contracts
+npm run test:hokm
+npm run test:meetings
 npm run test:hr-scope && npm run test:org && npm run test:prototype && npm run test:workflow
 ```
 

@@ -20,6 +20,9 @@
     "test:hr-scope": "node --test tests/hr-scope.test.cjs",
     "test:file-audit": "node --test tests/hr-file-audit.test.cjs",
     "test:contracts": "node --test tests/hr-contracts.test.cjs",
+    "test:hokm-rules": "node --test tests/hr-hokm-rules.test.cjs",
+    "test:hokm": "node --test tests/hr-hokm.test.cjs",
+    "test:meetings": "node --test tests/hr-meetings.test.cjs",
     "generate": "prisma generate",
     "postinstall": "prisma generate"
   },

@@ -7,6 +7,8 @@ import { createHrRequest, decideHrRequest, listHrRequests, listRecruitment, list
 import { listFeedback, listRegulations, listSurveys, saveFeedback, saveRegulation, saveSurvey, submitSurvey, surveyResults } from "./hr-engagement";
 import { listFeatures, listProductivity, listPromotion, myFeatures, saveFeature, saveProductivity, saveTalent } from "./hr-talent";
 import { contractStats, fileAudit, listContractors, listContracts, listDecrees, listDocuments, notifyDecree, renewContract, saveContract, saveContractor, saveDecree, saveDocument, saveFileFacts, terminateContract } from "./hr-contracts";
+import { listHokmProfiles, listTemplates, saveHokmProfile, saveTemplate, templateBoard } from "./hr-hokm";
+import { listMeetings, listMinutes, saveMeeting, saveMinute, sendMinuteForSignature, signMinute, withdrawMinute } from "./hr-meetings";
 
 async function dashboard(actor: SessionUser) {
   const profile = await prisma.hrEmployee.findUnique({where: {userId: actor.id}, include: employeeInclude});
@@ -76,6 +78,14 @@ export async function readHr(session: SessionUser | null, resource: string, quer
     case "team-reports": return getHrReport(actor, true, query);
     case "contracts": return listContracts(actor, query);
     case "decrees": return listDecrees(actor, query);
+    case "decree-templates": return listTemplates(actor);
+    // The picker the حکم dialog opens: layouts with their item rules, and the
+    // personnel the actor may issue a decree for.
+    case "hokm-board": return templateBoard(actor);
+    case "hokm-profiles": return listHokmProfiles(actor);
+    case "meetings": return listMeetings(actor);
+    case "minutes": return listMinutes(actor, query);
+    case "my-minutes": return listMinutes(actor, query, true);
     case "documents": return listDocuments(actor);
     case "file-audit": return fileAudit(actor);
     case "contractors": return listContractors(actor);
@@ -115,6 +125,18 @@ export async function writeHr(session: SessionUser | null, resource: string, inp
       const body = bodyObject(input);
       if (id && body.action === "notify") return notifyDecree(actor, id);
       return saveDecree(actor, input, id);
+    }
+    case "decree-templates": return saveTemplate(actor, input, id);
+    case "hokm-profiles": if (!id) throw new AccessError(400, "پرونده پرسنلی انتخاب کنید"); return saveHokmProfile(actor, id, input);
+    case "meetings": return saveMeeting(actor, input, id);
+    // یک صورت‌جلسه سه کار دارد که همه روی ردیف موجود معنا دارند: نوشتن، ارسال
+    // برای امضا، بازگرداندن به پیش‌نویس — و امضا که خودِ امضاکننده انجام می‌دهد.
+    case "minutes": {
+      const body = bodyObject(input);
+      if (id && body.action === "send") return sendMinuteForSignature(actor, id);
+      if (id && body.action === "withdraw") return withdrawMinute(actor, id);
+      if (id && body.action === "sign") return signMinute(actor, id, input);
+      return saveMinute(actor, input, id);
     }
     case "documents": return saveDocument(actor, input);
     case "contractors": return saveContractor(actor, input, id);

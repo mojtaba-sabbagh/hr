@@ -4,7 +4,9 @@
 // natural key, and administrator choices such as a disabled subsystem are never overwritten.
 import { Prisma, PrismaClient } from "@prisma/client";
 import { hash } from "bcryptjs";
+import { deflateSync } from "node:zlib";
 import { GROUP_TEMPLATES, PERMISSIONS, SUBSYSTEMS } from "../app/lib/access-catalog";
+import { letterFor } from "../app/lib/hokm-items";
 import { PLAN_SCENARIOS } from "../app/lib/hr-types";
 import { OrgHierarchyService } from "../app/lib/org-chart";
 import { defaultSettings } from "../app/lib/workflow/types";
@@ -257,6 +259,125 @@ async function seedCore(users: Map<string, string>) {
   }
 }
 
+/**
+ * A signature image that is actually an image.
+ *
+ * The demo minute must look signed on paper, so the seed draws a small PNG with
+ * a hand-like stroke instead of storing a placeholder. It is generated rather
+ * than embedded so the seed file stays readable, and it is a *snapshot* only:
+ * the accounts it is copied onto belong to invented people.
+ */
+function scribblePng(width = 240, height = 80) {
+  const stride = width * 4 + 1;
+  const raw = Buffer.alloc(stride * height);
+  const ink = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const at = y * stride + 1 + x * 4;
+    raw[at] = 21; raw[at + 1] = 37; raw[at + 2] = 78; raw[at + 3] = 255;
+  };
+  for (let x = 10; x < width - 10; x++) {
+    const t = (x - 10) / (width - 20);
+    const y = height / 2 + Math.sin(t * Math.PI * 4) * height * 0.24 + Math.sin(t * Math.PI * 11) * height * 0.07;
+    for (let d = -1; d <= 1; d++) ink(x, Math.round(y) + d);
+    // A flick upward now and then, so the line reads as a hand and not a wave.
+    if (x % 53 === 0) for (let k = 1; k < 14; k++) ink(x + Math.round(k * 0.35), Math.round(y) - k);
+  }
+  const table = Array.from({length: 256}, (_, n) => {let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0;});
+  const crc = (bytes: Buffer) => {let c = 0xffffffff; for (const byte of bytes) c = table[(c ^ byte) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0;};
+  const chunk = (type: string, data: Buffer) => {
+    const head = Buffer.alloc(8); head.writeUInt32BE(data.length, 0); head.write(type, 4, "ascii");
+    const tail = Buffer.alloc(4); tail.writeUInt32BE(crc(Buffer.concat([Buffer.from(type, "ascii"), data])), 0);
+    return Buffer.concat([head, data, tail]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8; ihdr[9] = 6;
+  return `data:image/png;base64,${Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]).toString("base64")}`;
+}
+
+const HOKM_TEMPLATE = {
+  name: "حکم کارگزینی شرکت",
+  title: "حکم کارگزینی",
+  ministryLine: COMPANY.name,
+  unitLine: "معاونت منابع انسانی",
+  intro: "در اجرای مقررات استخدامی و با توجه به مصوبهٔ هیئت مدیره، حکم زیر برای نامبرده صادر می‌شود.",
+  footer: "این حکم در دو نسخه صادر شده و نسخهٔ دوم در پروندهٔ پرسنلی نگهداری می‌شود.",
+};
+// The catalogue is the organization's own; this is one plausible set of rows.
+const HOKM_RULES = [
+  {key: "base", label: "پایه استحقاقی", kind: "EARNING", required: true, defaultAmount: 0},
+  {key: "attract", label: "فوق العاده جذب", kind: "EARNING", required: false, defaultAmount: 0},
+  {key: "housing", label: "حق مسکن", kind: "EARNING", required: false, defaultAmount: 0},
+  {key: "insurance", label: "بیمه سهم کارمند", kind: "DEDUCTION", required: false, defaultAmount: 0},
+];
+
+/** کارگزینی: one layout, one filled حکم, and the facts the paper prints. */
+async function seedKargarzini(companyId: string, employees: Map<string, string>, users: Map<string, string>) {
+  const template = await prisma.hrDecreeTemplate.findUnique({where: {companyId_name: {companyId, name: HOKM_TEMPLATE.name}}})
+    ?? await prisma.hrDecreeTemplate.create({data: {...HOKM_TEMPLATE, companyId, items: {create: HOKM_RULES.map((rule, index) => ({...rule, note: "", sortOrder: index}))}}});
+  const director = employees.get("EMP-1001")!;
+  await prisma.hrHokmProfile.upsert({
+    where: {employeeId: director},
+    create: {employeeId: director, fatherName: "محمود", idBookNo: "۱۲۴۵", birthPlace: "تهران", birthProvince: "تهران", degree: "کارشناسی ارشد", major: "مدیریت منابع انسانی",
+      orientation: "مدیریت منابع انسانی", university: "دانشگاه تهران", country: "ایران", orgPosition: "مدیر منابع انسانی", positionNo: "۱۴۰۱", positionUniqueId: "ITFCO-1001",
+      employmentStatus: "رسمی", employmentCase: "تمام وقت", maritalStatus: "متأهل", rank: "", licenseNo: "", executivePosition: "مدیر منابع انسانی",
+      serviceYears: 9, serviceMonths: 6, serviceDays: 0, children: 2, basePoint: 0, veteranPoint: 0},
+    update: {},
+  });
+  // The reference paper's figure: ۱٫۲۰۳٫۲۹۵٫۷۱۵ ریال, spelled on the page.
+  const number = "ح-۱۴۰۵-۱۲۰۱";
+  if (!(await prisma.hrDecree.findUnique({where: {companyId_number: {companyId, number}}}))) {
+    const items = [
+      {key: "base", label: "پایه استحقاقی", kind: "EARNING", amount: 1000000000},
+      {key: "attract", label: "فوق العاده جذب", kind: "EARNING", amount: 203295715},
+      {key: "housing", label: "حق مسکن", kind: "EARNING", amount: 0},
+      {key: "insurance", label: "بیمه سهم کارمند", kind: "DEDUCTION", amount: 0},
+    ];
+    await prisma.hrDecree.create({data: {companyId, employeeId: director, number, kind: "SALARY_INCREASE", effectiveAt: new Date("2026-10-01"),
+      baseSalary: 1203295715, signer: "سارا محمدی", signerTitle: "مدیر منابع انسانی", signerUserId: users.get("sara.mohammadi@itfco.example") ?? null,
+      reason: "افزایش سالانهٔ حقوق و مزایا", templateId: template.id, createdByName: "کارگزینی",
+      items: {create: items.map((item, index) => ({...item, note: "", letter: letterFor(index), sortOrder: index}))}}});
+  }
+}
+
+/** جلسات: one standing body, a minute written, and one already signed. */
+async function seedMeetings(companyId: string, employees: Map<string, string>, users: Map<string, string>) {
+  const meeting = await prisma.hrMeeting.findFirst({where: {companyId, name: "شورای آموزشی"}})
+    ?? await prisma.hrMeeting.create({data: {companyId, name: "شورای آموزشی", period: "ماهیانه", createdByName: "دبیرخانه",
+      members: {create: [{employeeId: employees.get("EMP-1001")!, role: "SECRETARY"}, {employeeId: employees.get("EMP-1002")!, role: "MEMBER"}, {employeeId: employees.get("EMP-1003")!, role: "MEMBER"}]}}});
+  const image = scribblePng();
+  // The two demo signers get a mark of their own, so a minute they sign tomorrow
+  // prints with a signature rather than a blank line.
+  for (const email of ["sara.mohammadi@itfco.example", "reza.karimi@itfco.example"]) {
+    const userId = users.get(email);
+    if (userId && !(await prisma.user.findUnique({where: {id: userId}, select: {signatureImage: true}}))?.signatureImage) {
+      await prisma.user.update({where: {id: userId}, data: {signatureImage: image, signatureAt: new Date()}});
+    }
+  }
+  const signer = (code: string, title: string, at: Date) => {
+    const userId = users.get(EMPLOYEES.find(employee => employee.code === code)!.email)!;
+    return {userId, employeeId: employees.get(code)!, signerName: EMPLOYEES.find(employee => employee.code === code)!.name, signerTitle: title, image, signedAt: at};
+  };
+  const minutes = [
+    {number: "ج-۱۴۰۵/۰۱", date: new Date("2026-10-20"), time: "۱۰:۳۰", status: "FOR_SIGNATURE", summary: "بررسی برنامهٔ آموزشی ترم آینده و ظرفیت دوره‌های تخصصی.",
+      attendees: [{employeeId: employees.get("EMP-1001")!, present: true}, {employeeId: employees.get("EMP-1002")!, present: true}, {employeeId: employees.get("EMP-1003")!, present: false}],
+      resolutions: [{text: "برنامهٔ آموزشی ترم آینده با اصلاحات پیشنهادی تصویب شد.", result: true, ownerId: employees.get("EMP-1002")!, dueDate: new Date("2026-11-20")},
+        {text: "گزارش نیازسنجی دوره‌های تخصصی تا جلسهٔ بعد ارائه شود.", result: true, ownerId: employees.get("EMP-1003")!, dueDate: new Date("2026-11-05")}],
+      signatures: [signer("EMP-1001", "دبیر شورا", new Date("2026-10-21T08:10:00.000Z"))]},
+    {number: "ج-۱۴۰۵/۰۲", date: new Date("2026-09-22"), time: "۰۹:۰۰", status: "SIGNED", summary: "تصویب سرفصل‌های دورهٔ ایمنی کار در ارتفاع.",
+      attendees: [{employeeId: employees.get("EMP-1001")!, present: true}, {employeeId: employees.get("EMP-1002")!, present: true}],
+      resolutions: [{text: "سرفصل‌های دورهٔ ایمنی کار در ارتفاع تصویب شد.", result: true, ownerId: employees.get("EMP-1002")!, dueDate: new Date("2026-10-15")}],
+      signatures: [signer("EMP-1001", "دبیر شورا", new Date("2026-09-23T07:40:00.000Z")), signer("EMP-1002", "عضو شورا", new Date("2026-09-23T09:05:00.000Z"))]},
+  ];
+  for (const minute of minutes) {
+    if (await prisma.hrMeetingMinute.findUnique({where: {companyId_number: {companyId, number: minute.number}}})) continue;
+    await prisma.hrMeetingMinute.create({data: {companyId, meetingId: meeting.id, number: minute.number, date: minute.date, time: minute.time, location: "سالن جلسات", status: minute.status,
+      summary: minute.summary, createdById: users.get("sara.mohammadi@itfco.example") ?? null, createdByName: "سارا محمدی",
+      attendees: {create: minute.attendees},
+      resolutions: {create: minute.resolutions.map((resolution, index) => ({...resolution, itemNo: String(index + 1), sortOrder: index}))},
+      signatures: {create: minute.signatures}}});
+  }
+}
+
 async function main() {
   await seedSubsystems();
   await seedPermissions();
@@ -272,8 +393,10 @@ async function main() {
   await seedTalent(employees);
   await seedProductivity(employees);
   await seedRegulations();
+  await seedKargarzini(company.id, employees, users);
+  await seedMeetings(company.id, employees, users);
   await seedCore(users);
-  console.log(`Seeded ${SUBSYSTEMS.length} subsystems, ${PERMISSIONS.length} permissions, ${ACCOUNTS.length} accounts, ${EMPLOYEES.length} personnel records and their organisational chart.`);
+  console.log(`Seeded ${SUBSYSTEMS.length} subsystems, ${PERMISSIONS.length} permissions, ${ACCOUNTS.length} accounts, ${EMPLOYEES.length} personnel records and their organisational chart, a حکم layout with one issued decree, and a meeting whose minutes are partially and fully signed.`);
 }
 
 main()

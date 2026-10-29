@@ -137,22 +137,27 @@ If «second core module» is meant as the second item in the HR menu rather than
 
 1. ~~Link `HrEmployee` to the chart~~ — done 2026-10-28.
 2. ~~کارگزینی core: contracts + decrees + documents + audit rules~~ — done 2026-10-28, see `docs/KARGARZINI.md`. Contractor companies came with it (the contract kind `CONTRACTOR` needs a roster to point at).
-3. Probation, hire-to-file, certificates.
-4. Procurement/finance hand-off for contractor companies (the roster itself exists).
+3. ~~حکم کارگزینی as a printable paper, and امضای من~~ — done 2026-10-29, see `docs/KARGARZINI.md`. The item catalogue is per organization (`HrDecreeTemplate` / `HrDecreeItemRule`), the issued decree keeps its own copy of the rows, and `/hr/decree/[id]` prints A4 through the browser's own «ذخیره به‌صورت PDF».
+4. ~~جلسات و صورت‌جلسه with member signatures~~ — done 2026-10-29, see `docs/MEETINGS.md`. The Vue/Django meeting application is ported onto the portal's companies, accounts and permissions; a minute freezes on send and closes on the last present signer.
+5. Probation, hire-to-file, certificates.
+6. Procurement/finance hand-off for contractor companies (the roster itself exists).
 
 ---
 
 ## 7. Verification commands
 
 ```bash
-npx prisma generate              # after the HrEmployee.companyId and HrContract migrations
-npx prisma migrate deploy        # 20261028180000_hr_contracts
+npx prisma generate              # after the HrEmployee.companyId, HrContract and HrMeeting migrations
+npx prisma migrate deploy        # 20261028180000_hr_contracts, 20261029120000_hr_hokm_meetings
 npx tsc --noEmit
 npm run test:access              # permissions
 npm run test:org                 # reporting hierarchy
 npm run test:hr-scope            # personnel files ↔ chart
 npm run test:file-audit          # the 15 audit rules (no database needed)
+npm run test:hokm-rules          # amount in words, item rows, signature bounds (no database needed)
 npm run test:contracts           # contracts, decrees, documents, tenant isolation
+npm run test:hokm                # حکم layouts, item snapshots, totals, مشخصات حکم
+npm run test:meetings            # minutes state machine, quorum, signatures, scopes
 npm run test:workflow            # approval routing
 npm run test:prototype           # prototype account parity
 npm run backfill:org             # idempotent chart backfill

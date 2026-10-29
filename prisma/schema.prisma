@@ -40,6 +40,14 @@ model User {
   groupMemberships    UserGroup[]
   hrProfile           HrEmployee?
   companyMemberships  CompanyMember[]
+  // The person's own signature, as a transparent PNG data URL. One per person,
+  // reused wherever a paper needs it: a حکم, a صورت‌جلسه. It is drawn or
+  // uploaded once and never typed, because a signature is a mark, not a font.
+  signatureImage      String?         @db.Text
+  signatureAt         DateTime?
+  // A signature captured on a minute is snapshotted next to the paper, so a
+  // later change of signature cannot rewrite a document that was already signed.
+  minuteSignatures    HrMinuteSignature[]
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 }
@@ -220,6 +228,13 @@ model HrEmployee {
   veteranVerified Boolean   @default(false)
   employmentState String    @default("ACTIVE")
   stateSince      DateTime? @db.Date
+  // The identity block a حکم prints: the facts an organization keeps about the
+  // person's degree, seat and service, which are the same categories everywhere
+  // and different labels in each institution.
+  hokmProfile   HrHokmProfile?
+  meetingSeats  HrMeetingMember[]
+  minuteAttendance HrMinuteAttendee[]
+  ownedResolutions HrMinuteResolution[]
   responses     HrSurveyResponse[]
   feedback      HrFeedback[]
   acknowledgements HrAcknowledgement[]
@@ -419,6 +434,15 @@ model HrDecree {
   cosigner    String @default("")
   baseSalary  Int    @default(0)
   reason      String @default("")
+  // The organization's layout this حکم was issued on. Kept by id *and* by the
+  // rows it produced: a template edited later must not restyle a paper that was
+  // already signed, so `items` below are the copy that is printed.
+  templateId   String?
+  template     HrDecreeTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  signerTitle  String @default("")
+  // Whose signature image the print page shows, if the signer has one.
+  signerUserId String?
+  items        HrDecreeItem[]
   createdById   String?
   createdByName String @default("")
   createdAt   DateTime @default(now())
@@ -465,6 +489,202 @@ model HrContractorCompany {
   contracts  HrContract[]
   @@unique([companyId, name])
   @@index([companyId, active])
+}
+
+// قالب حکم: the layout and the item catalogue an organization issues its decrees
+// on. "Its items are different in each organization" is the whole reason this is
+// a table and not a constant: the same code prints a university's salary items
+// and a factory's, because the list is data.
+model HrDecreeTemplate {
+  id           String @id @default(cuid())
+  companyId    String
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name         String // «حکم اعضای هیات علمی رسمی»
+  title        String @default("حکم کارگزینی")
+  ministryLine String @default("") // the line at the top right of the paper
+  unitLine     String @default("") // the institution's own name
+  intro        String @default("") // default شرح حکم
+  footer       String @default("") // the standing paragraph above the signature
+  active       Boolean @default(true)
+  items        HrDecreeItemRule[]
+  decrees      HrDecree[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@unique([companyId, name])
+  @@index([companyId, active])
+}
+
+// One line of the item catalogue: «حقوق و مرتبه و پایه», «حق اولاد», …
+model HrDecreeItemRule {
+  id            String @id @default(cuid())
+  templateId    String
+  template      HrDecreeTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  key           String // stable code, e.g. BASE, CHILD, HOUSING
+  label         String
+  kind          String @default("EARNING") // EARNING | DEDUCTION
+  required      Boolean @default(false)
+  defaultAmount Int @default(0)
+  note          String @default("")
+  sortOrder     Int @default(0)
+  @@unique([templateId, key])
+  @@index([templateId, sortOrder])
+}
+
+// The amounts printed on one حکم. Copied from the catalogue at issue time and
+// frozen afterwards, so editing the template does not rewrite a signed paper.
+model HrDecreeItem {
+  id        String @id @default(cuid())
+  decreeId  String
+  decree    HrDecree @relation(fields: [decreeId], references: [id], onDelete: Cascade)
+  key       String
+  label     String
+  letter    String @default("") // الف، ب، پ …
+  kind      String @default("EARNING")
+  amount    Int    @default(0)
+  note      String @default("")
+  sortOrder Int    @default(0)
+  @@unique([decreeId, key])
+  @@index([decreeId, sortOrder])
+}
+
+// مشخصات حکم: the identity block fields 1–19 of the paper. They are kept apart
+// from `HrEmployee` because they describe the document, not the employment, and
+// because every organization fills them differently.
+model HrHokmProfile {
+  id               String @id @default(cuid())
+  employeeId       String @unique
+  employee         HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  fatherName       String @default("")
+  idBookNo         String @default("") // شماره شناسنامه
+  birthPlace       String @default("")
+  birthProvince    String @default("")
+  degree           String @default("") // آخرین مدرک تحصیلی
+  major            String @default("")
+  orientation      String @default("") // گرایش
+  university       String @default("")
+  country          String @default("")
+  degreeDate       DateTime? @db.Date
+  orgPosition      String @default("") // پست سازمانی
+  positionNo       String @default("")
+  positionUniqueId String @default("") // شناسه یکتای پست
+  employmentStatus String @default("") // وضعیت استخدامی: رسمی قطعی …
+  employmentCase   String @default("شاغل")
+  serviceYears     Int @default(0)
+  serviceMonths    Int @default(0)
+  serviceDays      Int @default(0)
+  maritalStatus    String @default("")
+  children         Int @default(0)
+  rank             String @default("") // مرتبه علمی / گروه شغلی
+  basePoint        Int @default(0) // پایه استحقاقی
+  veteranPoint     Int @default(0) // ایثارگری
+  licenseNo        String @default("") // مجوز شماره
+  licenseDate      DateTime? @db.Date
+  executivePosition String @default("") // پست اجرایی
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// جلسه: a standing body with a roster — «شورای دانشگاه», «شورای دانشکده».
+model HrMeeting {
+  id            String @id @default(cuid())
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name          String
+  period        String @default("") // روزانه | هفتگی | ماهیانه | غیرمشخص
+  active        Boolean @default(true)
+  createdById   String?
+  createdByName String @default("")
+  members       HrMeetingMember[]
+  minutes       HrMeetingMinute[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([companyId, active])
+}
+
+// عضویت: who sits on it, and who writes for it. Only an active member's minute
+// asks them for a signature.
+model HrMeetingMember {
+  id         String @id @default(cuid())
+  meetingId  String
+  meeting    HrMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  role       String @default("MEMBER") // MEMBER | SECRETARY
+  active     Boolean @default(true)
+  createdAt  DateTime @default(now())
+  @@unique([meetingId, employeeId])
+  @@index([employeeId, active])
+}
+
+// صورت‌جلسه: the paper. DRAFT is written, FOR_SIGNATURE is frozen and out for
+// signature, SIGNED is complete, CANCELLED is kept as history.
+model HrMeetingMinute {
+  id            String @id @default(cuid())
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  meetingId     String
+  meeting       HrMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  number        String
+  date          DateTime @db.Date
+  time          String @default("")
+  location      String @default("")
+  status        String @default("DRAFT")
+  summary       String @default("")
+  createdById   String?
+  createdByName String @default("")
+  attendees     HrMinuteAttendee[]
+  resolutions   HrMinuteResolution[]
+  signatures    HrMinuteSignature[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@unique([companyId, number])
+  @@index([companyId, status, date])
+}
+
+// The attendance list as it stood on the day: present is what the signature
+// quorum counts, so somebody absent is not chased for a signature.
+model HrMinuteAttendee {
+  id         String @id @default(cuid())
+  minuteId   String
+  minute     HrMeetingMinute @relation(fields: [minuteId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  present    Boolean @default(true)
+  @@unique([minuteId, employeeId])
+}
+
+// مصوبه: one numbered decision. `result` is the vote, `owner` the person who has
+// to carry it out.
+model HrMinuteResolution {
+  id         String @id @default(cuid())
+  minuteId   String
+  minute     HrMeetingMinute @relation(fields: [minuteId], references: [id], onDelete: Cascade)
+  itemNo     String
+  text       String
+  result     Boolean @default(true)
+  ownerId    String?
+  owner      HrEmployee? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  dueDate    DateTime? @db.Date
+  sortOrder  Int @default(0)
+  @@index([minuteId, sortOrder])
+  @@index([ownerId])
+}
+
+// امضای صورت‌جلسه: the image as it was when the member signed. It is a snapshot,
+// not a pointer, because the paper must keep the mark that was put on it.
+model HrMinuteSignature {
+  id         String @id @default(cuid())
+  minuteId   String
+  minute     HrMeetingMinute @relation(fields: [minuteId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeId String
+  signerName String
+  signerTitle String @default("")
+  image      String @db.Text
+  signedAt   DateTime @default(now())
+  @@unique([minuteId, userId])
+  @@index([userId, signedAt])
 }
 
 model HrSurvey {
@@ -626,6 +846,9 @@ model Company {
   hrDecrees     HrDecree[]
   hrDocuments   HrDocument[]
   hrContractors HrContractorCompany[]
+  hrDecreeTemplates HrDecreeTemplate[]
+  hrMeetings    HrMeeting[]
+  hrMinutes     HrMeetingMinute[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }

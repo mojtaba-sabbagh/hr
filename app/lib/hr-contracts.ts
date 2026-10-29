@@ -16,9 +16,10 @@ import { CONTRACT_KINDS, CONTRACT_STATUS, CONTRACT_WINDOWS, DECREE_KINDS, DECREE
 import { actorCompanyIds, bool, canAny, dateField, employeeOption, employeeScope, integer, notifyHr, option, optionalText, requireAny, scopedEmployee, today } from "./hr-policy";
 import type { HrDb } from "./hr-policy";
 import { auditFiles, contractExpiry, documentPercent, missingDocuments, type AuditableFile } from "./hr-file-audit";
+import { itemTotals, replaceDecreeItems } from "./hr-hokm";
 
 const contractInclude = {employee: {select: employeeOption}, contractorCompany: {select: {id: true, name: true}}} as const;
-const decreeInclude = {employee: {select: employeeOption}, contract: {select: {id: true, kind: true, startDate: true, endDate: true}}} as const;
+const decreeInclude = {employee: {select: employeeOption}, contract: {select: {id: true, kind: true, startDate: true, endDate: true}}, template: {select: {id: true, name: true}}, items: {orderBy: {sortOrder: "asc" as const}}} as const;
 // The keys that widen a کارگزینی read from "my team" to "every file of my companies".
 const viewKeys = ["hr:contracts:view", "hr:contracts:manage"];
 const teamKeys = ["hr:team-files:view"];
@@ -177,6 +178,10 @@ export async function listDecrees(actor: SessionUser, query = new URLSearchParam
   const now = new Date();
   const manage = canAny(actor, ["hr:decrees:manage"]);
   return {rows: rows.map(row => ({...row, kindTitle: DECREE_KINDS[row.kind as keyof typeof DECREE_KINDS] ?? row.kind, statusTitle: DECREE_STATUS[row.status as keyof typeof DECREE_STATUS] ?? row.status,
+      // The paper's جمع, computed from the copied rows rather than stored twice.
+      total: row.items.length ? itemTotals(row.items).net : row.baseSalary,
+      itemCount: row.items.length,
+      canPrint: row.items.length > 0,
       notifyDays: row.notifiedAt ? 0 : Math.floor((now.getTime() - row.issuedAt.getTime()) / 86400000)})),
     employees: manage ? await prisma.hrEmployee.findMany({where: {active: true, ...(await employeeScope(actor, ["hr:decrees:manage"]))}, select: employeeOption, orderBy: {name: "asc"}}) : [],
     contractKinds: CONTRACT_KINDS};
@@ -200,10 +205,40 @@ export async function saveDecree(actor: SessionUser, input: unknown, id?: string
     if (existing && existing.notifiedAt) throw new AccessError(409, "حکم ابلاغ‌شده قابل ویرایش نیست؛ حکم اصلاحی صادر کنید");
     const number = optionalText(body.number, "شمارهٔ حکم", 60) || existing?.number || await nextDecreeNumber(tx, companyId, new Date());
     if (await tx.hrDecree.findFirst({where: {companyId, number, ...(id ? {id: {not: id}} : {})}})) throw new AccessError(409, "شمارهٔ حکم تکراری است");
-    const data = {companyId, employeeId: employee.id, contractId, number, kind, effectiveAt, signer: optionalText(body.signer, "امضاکننده", 120), cosigner: optionalText(body.cosigner, "هم‌امضا", 120), baseSalary, reason: optionalText(body.reason, "دلیل", 2000)};
+    // The layout the paper is printed with. A decree may carry no template at
+    // all — an older row, or a plain typed decree — and then it prints without
+    // the numbered grid, exactly as it did before templates existed.
+    const template = optionalText(body.templateId, "قالب حکم", 100) || null;
+    let rules: {key: string; label: string; kind: string}[] = [];
+    if (template) {
+      const found = await tx.hrDecreeTemplate.findFirst({where: {id: template, companyId, ...(await rowTenant(actor, tx))}, include: {items: {orderBy: {sortOrder: "asc"}}}});
+      if (!found) throw new AccessError(400, "قالب حکم معتبر انتخاب کنید");
+      // Item labels and letters come from the company's catalogue, never from
+      // the client, so a decree cannot print a line the organization never
+      // defined.
+      rules = found.items.map(rule => ({key: rule.key, label: rule.label, kind: rule.kind}));
+    } else if (body.items !== undefined) {
+      throw new AccessError(400, "برای ثبت ردیف‌های حکم ابتدا قالب انتخاب کنید");
+    }
+    const data = {
+      companyId, employeeId: employee.id, contractId, number, kind, effectiveAt, baseSalary, templateId: template,
+      signer: optionalText(body.signer, "امضاکننده", 120),
+      signerTitle: optionalText(body.signerTitle, "عنوان امضاکننده", 160),
+      signerUserId: optionalText(body.signerUserId, "کاربر امضاکننده", 100) || null,
+      cosigner: optionalText(body.cosigner, "هم‌امضا", 120),
+      reason: optionalText(body.reason, "دلیل", 2000),
+    };
+    if (data.signerUserId && !(await tx.user.findUnique({where: {id: data.signerUserId}, select: {id: true}}))) throw new AccessError(400, "کاربر امضاکننده معتبر نیست");
     const row = id ? await tx.hrDecree.update({where: {id}, data, include: decreeInclude}) : await tx.hrDecree.create({data: {...data, createdById: actor.id, createdByName: actor.name}, include: decreeInclude});
+    if (body.items !== undefined) {
+      const items = await replaceDecreeItems(tx, row.id, body.items, rules);
+      // The ledger's `baseSalary` is what the file's own numbers read; when the
+      // paper carries items, its جمع is the honest figure.
+      const net = itemTotals(items).net;
+      if (items.length && !baseSalary && net > 0) await tx.hrDecree.update({where: {id: row.id}, data: {baseSalary: net}});
+    }
     if (!id) await notifyHr(tx, employee.id, "حکم کارگزینی برای شما صادر شد", `${number} — ${DECREE_KINDS[kind]}`, "decrees");
-    return row;
+    return tx.hrDecree.findUniqueOrThrow({where: {id: row.id}, include: decreeInclude});
   });
 }
 

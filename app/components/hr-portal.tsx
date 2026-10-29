@@ -2,13 +2,16 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, ArrowRightLeft, ArrowUpLeft, BarChart3, Bell, Briefcase, Building2, CheckCheck, CheckCircle2, ClipboardList, Clock3, Download, FileSignature, FileText, FolderOpen, Inbox, LayoutDashboard, Loader2, MessageSquare, Plus, Search, ScrollText, ShieldAlert, Stamp, Star, Target, TrendingUp, UserPlus, UserRound, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, ArrowRightLeft, ArrowUpLeft, BarChart3, Bell, Briefcase, Building2, CalendarDays, CheckCheck, CheckCircle2, ClipboardList, Clock3, Download, FileSignature, FileText, FolderOpen, Inbox, LayoutDashboard, Loader2, MessageSquare, PenLine, PenTool, Plus, Search, ScrollText, ShieldAlert, Stamp, Star, Target, TrendingUp, Upload, UserPlus, UserRound, Users, X, type LucideIcon } from "lucide-react";
 import AppShell, { type NavItem } from "./app-shell";
+import { HokmDialog, TemplateDialog, type Board } from "./hokm-forms";
+import { MeetingDialog, MinuteDialog, type MeetingListItem } from "./meeting-forms";
 import { hasPermission } from "@/app/lib/access-policy";
 import type { SessionUser } from "@/app/lib/session-types";
 import { ATTENDANCE_STATUS, CANDIDATE_STAGES, COMPETENCIES, CONTRACT_KINDS, CONTRACT_STATUS, CONTRACT_TYPES, DECREE_KINDS, DECREE_STATUS, DOCUMENT_STATUS, EMPLOYMENT_STATES, FEATURE_CATEGORIES, FEEDBACK_KINDS, FILE_DOCUMENTS, HR_REQUEST_KINDS, HR_REQUEST_STATUS, MILITARY_STATUS, OKR_STATUS, PLAN_SCENARIOS, PLAN_STATUS, POTENTIAL_LEVELS, PROMOTION_STATUS, SHIFT_KINDS, VETERAN_STATUS, featureItems, type FeatureCategory } from "@/app/lib/hr-types";
 
-const EXPIRY_LABELS: Record<string, string> = {expired: "منقضی", risk: "کمتر از ۱۵ روز", warn: "کمتر از ۴۵ روز", notice: "کمتر از ۶۰ روز", ok: "معتبر", none: "دائم"};
+const MINUTE_STATUS: Record<string, string> = {DRAFT: "پیش‌نویس", FOR_SIGNATURE: "در انتظار امضا", SIGNED: "امضاشده", CANCELLED: "لغوشده"};
+const EXPIRY_LABELS: Record<string, string> ={expired: "منقضی", risk: "کمتر از ۱۵ روز", warn: "کمتر از ۴۵ روز", notice: "کمتر از ۶۰ روز", ok: "معتبر", none: "دائم"};
 
 type AnyData = Record<string, any>;
 type Row = Record<string, any>;
@@ -55,6 +58,7 @@ type RowAction = {id: string; label: string; tone?: "primary" | "secondary" | "d
 const views: ViewDef[] = [
   {id: "dashboard", resource: "dashboard", title: "پیشخوان منابع انسانی", subtitle: "نمایی روشن از پرسنل، درخواست‌ها و اعلان‌های شما", icon: LayoutDashboard, keys: [], eyebrow: "نمای کلی منابع انسانی"},
   {id: "profile", resource: "profile", title: "پروفایل من", subtitle: "اطلاعات پرسنلی و پرونده شخصی شما", icon: UserRound, keys: ["hr:profile:self"], eyebrow: "پرونده شخصی"},
+  {id: "signature", resource: "signature", title: "امضای من", subtitle: "یک‌بار بکشید یا بارگذاری کنید تا روی احکام و صورت‌جلسه‌ها بنشیند", icon: PenTool, keys: [], eyebrow: "امضای من"},
   {id: "my-attendance", resource: "my-attendance", title: "حضور و غیاب من", subtitle: "کارکرد روزانه و ساعت کاری ثبت‌شده شما", icon: Clock3, keys: ["hr:attendance:self"], eyebrow: "کارکرد من"},
   {id: "my-shifts", resource: "my-shifts", title: "شیفت‌های من", subtitle: "برنامه شیفت منتشرشده برای شما", icon: Clock3, keys: ["hr:shifts:self"], eyebrow: "شیفت من"},
   {id: "requests", resource: "requests", title: "درخواست‌های پرسنلی من", subtitle: "ثبت و پیگیری مرخصی، مأموریت و تغییر شیفت", icon: ClipboardList, keys: ["hr:requests:self"], eyebrow: "درخواست‌های من"},
@@ -69,7 +73,12 @@ const views: ViewDef[] = [
   {id: "team-reports", resource: "team-reports", title: "گزارش‌های تیم من", subtitle: "کارکرد و حضور اعضای تیم در بازه انتخابی", icon: BarChart3, keys: ["hr:team-reports:view", "hr:team-reports:export"], eyebrow: "تیم من"},
   {id: "people", resource: "people", title: "پرسنل و پروفایل جامع", subtitle: "پرونده پرسنلی، سرپرست و حساب کاربری", icon: Users, keys: ["hr:people:view", "hr:people:manage"], eyebrow: "عملیات منابع انسانی"},
   {id: "contracts", resource: "contracts", title: "قرارداد و حکم", subtitle: "دفتر قراردادها، تمدید، خاتمه و پنجرهٔ ۶۰ روزهٔ پایان", icon: FileSignature, keys: ["hr:contracts:view", "hr:contracts:manage"], eyebrow: "کارگزینی"},
-  {id: "decrees", resource: "decrees", title: "احکام کارگزینی", subtitle: "صدور، شماره‌گذاری و ابلاغ حکم‌ها", icon: Stamp, keys: ["hr:decrees:view", "hr:decrees:manage", "hr:decrees:notify"], eyebrow: "کارگزینی"},
+  {id: "decrees", resource: "decrees", title: "احکام کارگزینی", subtitle: "صدور، شماره‌گذاری، چاپ و ابلاغ حکم‌ها", icon: Stamp, keys: ["hr:decrees:view", "hr:decrees:manage", "hr:decrees:notify"], eyebrow: "کارگزینی"},
+  {id: "decree-templates", resource: "decree-templates", title: "قالب‌های حکم", subtitle: "سرصفحه و ردیف‌های پرداخت هر سازمان، یک‌بار تعریف و بارها استفاده", icon: FileSignature, keys: ["hr:decree-templates:manage", "hr:decrees:manage"], eyebrow: "کارگزینی"},
+  {id: "hokm-profiles", resource: "hokm-profiles", title: "مشخصات حکم", subtitle: "نام پدر، شناسنامه، مدرک، پست سازمانی و سوابقی که روی حکم چاپ می‌شود", icon: UserRound, keys: ["hr:decrees:view", "hr:decrees:manage"], eyebrow: "کارگزینی"},
+  {id: "meetings", resource: "meetings", title: "جلسات", subtitle: "شوراها و کمیته‌ها و کرسی‌های هر جلسه", icon: Users, keys: ["hr:meetings:view", "hr:meetings:manage", "hr:minutes:manage"], eyebrow: "جلسات و مصوبات"},
+  {id: "minutes", resource: "minutes", title: "صورت‌جلسه‌ها", subtitle: "نوشتن صورت‌جلسه، ثبت مصوبات و گردآوری امضای حاضران", icon: FileText, keys: ["hr:minutes:view", "hr:minutes:manage"], eyebrow: "جلسات و مصوبات"},
+  {id: "my-minutes", resource: "my-minutes", title: "صورت‌جلسه‌های من", subtitle: "صورت‌جلسه‌هایی که باید امضا کنید یا در آن‌ها حاضر بوده‌اید", icon: PenLine, keys: ["hr:minutes:self", "hr:minutes:sign", "hr:minutes:view"], eyebrow: "من"},
   {id: "documents", resource: "documents", title: "مدارک پرونده", subtitle: "چک‌لیست ده مدرک الزامی هر پرونده", icon: FolderOpen, keys: ["hr:documents:view", "hr:documents:manage"], eyebrow: "کارگزینی"},
   {id: "file-audit", resource: "file-audit", title: "ممیزی پرونده", subtitle: "پانزده قاعدهٔ بدبینانه روی چیزهایی که در پرونده ثبت شده است", icon: ShieldAlert, keys: ["hr:file-audit:view"], eyebrow: "کارگزینی"},
   {id: "contractors", resource: "contractors", title: "شرکت‌های پیمانکار", subtitle: "پیمانکاران مستقر در سایت و تاریخ قرارداد آن‌ها", icon: Building2, keys: ["hr:contractors:view", "hr:contractors:manage"], eyebrow: "کارگزینی"},
@@ -102,10 +111,8 @@ const CREATES: Record<string, Spec> = {
       {name: "startDate", label: "تاریخ شروع", type: "date", required: true}, {name: "endDate", label: "تاریخ پایان (برای دائم لازم نیست)", type: "date"},
       {name: "baseSalary", label: "حقوق پایه (ریال)", type: "number", min: 0}, {name: "contractorCompanyId", label: "شرکت پیمانکار (فقط قرارداد پیمانکاری)", type: "select", options: ctx.contractors.map(item => ({value: item.id, label: item.name}))},
       {name: "note", label: "توضیح", type: "textarea"}]},
-  decrees: {label: "حکم جدید", title: "صدور حکم کارگزینی", endpoint: "/api/hr/decrees", method: "POST", keys: ["hr:decrees:manage"],
-    fields: ctx => [{name: "employeeId", label: "پرسنل", type: "employee", required: true}, {name: "kind", label: "نوع حکم", type: "select", options: opts(DECREE_KINDS), required: true},
-      {name: "effectiveAt", label: "تاریخ اجرا", type: "date", required: true}, {name: "baseSalary", label: "حقوق پایه (ریال)", type: "number", min: 0},
-      {name: "number", label: "شمارهٔ حکم (خالی = شمارهٔ خودکار)", type: "text"}, {name: "signer", label: "امضاکننده", type: "text"}, {name: "cosigner", label: "هم‌امضا", type: "text"}, {name: "reason", label: "شرح حکم", type: "textarea"}]},
+  // احکام from a template are issued through `HokmDialog`: the fields are plain,
+  // but the amounts are the template's item list, which a fixed spec cannot hold.
   contractors: {label: "پیمانکار جدید", title: "ثبت شرکت پیمانکار", endpoint: "/api/hr/contractors", method: "POST", keys: ["hr:contracts:manage"],
     fields: [{name: "name", label: "نام شرکت", type: "text", required: true}, {name: "contractNo", label: "شمارهٔ قرارداد", type: "text"},
       {name: "startDate", label: "شروع قرارداد", type: "date"}, {name: "endDate", label: "پایان قرارداد", type: "date"}, {name: "active", label: "قرارداد جاری است", type: "checkbox", checked: true}, {name: "note", label: "توضیح", type: "textarea"}]},
@@ -180,6 +187,32 @@ const ACTIONS: Record<string, RowAction[]> = {
       show: (row, can) => can("hr:contracts:manage") && row.status === "ACTIVE"},
   ],
   decrees: [{id: "notify", label: "ابلاغ", tone: "primary", endpoint: row => `/api/hr/decrees/${row.id}`, fields: [], toBody: () => ({action: "notify"}), show: (row, can) => can("hr:decrees:notify") && !row.notifiedAt}],
+  // صورت‌جلسه: ارسال برای امضا متن را قفل می‌کند، بازگرداندن تا وقتی هیچ امضایی
+  // ثبت نشده ممکن است، و امضا فقط از سوی خودِ حاضر انجام می‌شود.
+  minutes: [
+    {id: "send", label: "ارسال برای امضا", tone: "primary", endpoint: row => `/api/hr/minutes/${row.id}`, fields: [], toBody: () => ({action: "send"}), show: (row, can) => can("hr:minutes:manage") && row.status === "DRAFT"},
+    {id: "sign", label: "امضای صورت‌جلسه", tone: "primary", endpoint: row => `/api/hr/minutes/${row.id}`, fields: [{name: "signerTitle", label: "عنوان امضاکننده (اختیاری)", type: "text"}], toBody: values => ({action: "sign", signerTitle: values.signerTitle}), show: (row, can) => can("hr:minutes:sign") && row.awaitingMe === true},
+    {id: "withdraw", label: "بازگشت به پیش‌نویس", tone: "danger", endpoint: row => `/api/hr/minutes/${row.id}`, fields: [], toBody: () => ({action: "withdraw"}), show: (row, can) => can("hr:minutes:manage") && row.status === "FOR_SIGNATURE" && nz(row.signatures?.length) === 0},
+  ],
+  // مشخصات حکم: every fact the paper prints but the personnel file never asked
+  // for. One dialog, saved onto the file's own profile row.
+  "hokm-profiles": [{id: "edit", label: "ویرایش مشخصات حکم", tone: "secondary", endpoint: row => `/api/hr/hokm-profiles/${row.id}`,
+    fields: () => [
+      {name: "fatherName", label: "نام پدر", type: "text"}, {name: "idBookNo", label: "شمارهٔ شناسنامه", type: "text"},
+      {name: "birthPlace", label: "محل تولد", type: "text"}, {name: "birthProvince", label: "استان محل تولد", type: "text"},
+      {name: "degree", label: "آخرین مدرک تحصیلی", type: "text"}, {name: "major", label: "رشتهٔ تحصیلی", type: "text"},
+      {name: "orientation", label: "گرایش", type: "text"}, {name: "university", label: "دانشگاه محل تحصیل", type: "text"},
+      {name: "country", label: "کشور محل تحصیل", type: "text"}, {name: "degreeDate", label: "تاریخ اخذ مدرک", type: "date"},
+      {name: "orgPosition", label: "پست سازمانی", type: "text"}, {name: "positionNo", label: "شمارهٔ پست", type: "text"},
+      {name: "positionUniqueId", label: "شناسهٔ یکتای پست", type: "text"}, {name: "employmentStatus", label: "وضعیت استخدامی", type: "text"},
+      {name: "employmentCase", label: "حالت استخدامی", type: "text"}, {name: "serviceYears", label: "سابقه (سال)", type: "number", min: 0},
+      {name: "serviceMonths", label: "سابقه (ماه)", type: "number", min: 0}, {name: "serviceDays", label: "سابقه (روز)", type: "number", min: 0},
+      {name: "maritalStatus", label: "وضعیت تأهل", type: "text"}, {name: "children", label: "تعداد فرزندان", type: "number", min: 0},
+      {name: "rank", label: "مرتبهٔ علمی", type: "text"}, {name: "basePoint", label: "پایهٔ استحقاقی", type: "number", min: 0},
+      {name: "veteranPoint", label: "امتیاز ایثارگری", type: "number", min: 0}, {name: "licenseNo", label: "شمارهٔ مجوز", type: "text"},
+      {name: "licenseDate", label: "تاریخ مجوز", type: "date"}, {name: "executivePosition", label: "پست اجرایی", type: "text"}],
+    toBody: values => ({...values, degreeDate: values.degreeDate || null, licenseDate: values.licenseDate || null}),
+    show: (_row, can) => can("hr:decrees:manage")}],
   documents: [{id: "file", label: "ثبت مدرک", tone: "secondary", endpoint: () => "/api/hr/documents",
     fields: () => [{name: "kind", label: "نوع مدرک", type: "select", options: opts(FILE_DOCUMENTS), required: true}, {name: "status", label: "وضعیت", type: "select", options: opts(DOCUMENT_STATUS), required: true, value: "PRESENT"}, {name: "reference", label: "شمارهٔ مدرک", type: "text"}],
     toBody: (values, row) => ({employeeId: row.id, kind: values.kind, status: values.status, reference: values.reference}),
@@ -208,6 +241,13 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
   const [create, setCreate] = useState<{spec: Spec; row?: Row} | null>(null);
   const [action, setAction] = useState<{spec: RowAction; row: Row} | null>(null);
   const [modalError, setModalError] = useState("");
+  // The two dialogs the generic field list cannot express. `board` is loaded
+  // when the حکم dialog opens, so the picker always shows the current templates.
+  const [hokmBoard, setHokmBoard] = useState<Board | null>(null);
+  const [template, setTemplate] = useState<Row | null | undefined>(undefined);
+  // undefined = closed, null = new, Row = editing an existing one.
+  const [meeting, setMeeting] = useState<Row | null | undefined>(undefined);
+  const [minute, setMinute] = useState<Row | null | undefined>(undefined);
   const ctx: Ctx = {employees: data?.employees ?? data?.rows?.map?.((row: Row) => ({id: row.id, name: row.name})) ?? [], jobs: data?.jobs ?? [], users: data?.users ?? [], contractors: data?.contractors ?? []};
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
@@ -233,6 +273,15 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     finally {setBusy(false);}
   }
 
+  // The حکم dialog needs the templates and their rows, which the decrees list
+  // does not carry. It is read on open so it is never stale.
+  async function openHokm() {
+    if (busy) return;
+    setBusy(true); setError(""); setModalError("");
+    try {setHokmBoard(await api<Board>("/api/hr/hokm-board"));}
+    catch (error) {setError(error instanceof Error ? error.message : "دریافت قالب‌های حکم انجام نشد");}
+    finally {setBusy(false);}
+  }
   const rows: Row[] = data?.rows ?? [];
   const matches = (value: string) => value.toLocaleLowerCase("fa").includes(search.trim().toLocaleLowerCase("fa"));
   const filtered = rows.filter(row => matches(Object.values(row).filter(value => typeof value === "string").join(" ")));
@@ -255,8 +304,47 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
       head.push("پرسنل", "نوع قرارداد", "بازهٔ قرارداد", "حقوق پایه", "پایان قرارداد", "وضعیت", "عملیات");
       filtered.forEach(row => push([<>{row.employee?.name || "—"}<span className="table-meta">{str(row.employee?.personnelCode)} · {str(row.employee?.department)}</span></>, str(row.kindTitle) || "—", <>{fshort(row.startDate)}<span className="table-meta">تا {row.endDate ? fshort(row.endDate) : "دائم"}</span></>, nz(row.baseSalary) ? `${fa(nz(row.baseSalary))} ریال` : "—", badge(row.expiry?.level, EXPIRY_LABELS), badge(row.status, CONTRACT_STATUS), actionButtons("contracts", row)]));
     } else if (viewId === "decrees") {
-      head.push("شمارهٔ حکم", "پرسنل", "نوع حکم", "تاریخ اجرا", "ابلاغ", "وضعیت", "عملیات");
-      filtered.forEach(row => push([<span className="request-title">{str(row.number)}</span>, row.employee?.name || "—", str(row.kindTitle) || "—", fshort(row.effectiveAt), row.notifiedAt ? <Badge tone="green">ابلاغ‌شده در {fshort(row.notifiedAt)}</Badge> : <Badge tone="amber">{fa(nz(row.notifyDays))} روز در انتظار ابلاغ</Badge>, badge(row.status, DECREE_STATUS), actionButtons("decrees", row)]));
+      head.push("شمارهٔ حکم", "پرسنل", "نوع حکم", "جمع حکم", "تاریخ اجرا", "ابلاغ", "وضعیت", "عملیات");
+      filtered.forEach(row => push([<span className="request-title">{str(row.number)}</span>, row.employee?.name || "—",
+        <>{str(row.kindTitle) || "—"}<span className="table-meta">{row.template?.name || "بدون قالب"}</span></>,
+        nz(row.total) ? <>{fa(nz(row.total))} ریال<span className="table-meta">{fa(nz(row.itemCount))} ردیف</span></> : "—",
+        fshort(row.effectiveAt),
+        row.notifiedAt ? <Badge tone="green">ابلاغ‌شده در {fshort(row.notifiedAt)}</Badge> : <Badge tone="amber">{fa(nz(row.notifyDays))} روز در انتظار ابلاغ</Badge>,
+        badge(row.status, DECREE_STATUS),
+        <div className="flex flex-wrap gap-2">{row.canPrint ? <a className="secondary-button" href={`/hr/decree/${row.id}`} target="_blank" rel="noreferrer">چاپ حکم</a> : null}{actionButtons("decrees", row)}</div>]));
+    } else if (viewId === "decree-templates") {
+      head.push("نام قالب", "عنوان حکم", "واحد", "ردیف‌های پرداخت", "وضعیت", "عملیات");
+      filtered.forEach(row => push([<span className="request-title">{str(row.name)}</span>, str(row.title), <>{row.company?.name || "—"}<span className="table-meta">{str(row.unitLine)}</span></>,
+        <>{fa((row.items || []).length)} ردیف<span className="table-meta">{(row.items || []).slice(0, 4).map((item: Row) => str(item.label)).join("، ") || "—"}</span></>,
+        row.active ? <Badge tone="green">فعال</Badge> : <Badge tone="gray">غیرفعال</Badge>,
+        <div className="flex flex-wrap gap-2">{can("hr:decree-templates:manage") ? <button className="secondary-button" disabled={busy} onClick={() => {setModalError(""); setTemplate(row);}}>ویرایش قالب</button> : "—"}</div>]));
+    } else if (viewId === "meetings") {
+      head.push("جلسه", "دوره", "دبیر", "اعضا", "صورت‌جلسه‌ها", "وضعیت", "عملیات");
+      filtered.forEach(row => push([<span className="request-title">{str(row.name)}</span>, str(row.period) || "—", str(row.secretary) || "—",
+        fa(nz(row.memberCount)), fa(nz(row.minuteCount)),
+        row.active ? <Badge tone="green">فعال</Badge> : <Badge tone="gray">غیرفعال</Badge>,
+        <div className="flex flex-wrap gap-2">{can("hr:meetings:manage") ? <button className="secondary-button" disabled={busy} onClick={() => {setModalError(""); setMeeting(row);}}>ویرایش جلسه</button> : "—"}</div>]));
+    } else if (["minutes", "my-minutes"].includes(viewId)) {
+      head.push("شماره", "جلسه", "تاریخ", "حاضران", "امضا", "وضعیت", "عملیات");
+      filtered.forEach(row => {
+        const signs = row.signatures || [];
+        const done = nz(row.signedCount);
+        const quorum = nz(row.signatureQuorum);
+        push([<span className="request-title">{str(row.number)}</span>,
+          <>{row.meeting?.name || "—"}<span className="table-meta">{row.meeting?.period || ""}</span></>,
+          fshort(row.date),
+          <>{fa(nz(row.presentCount))} از {fa(nz(row.attendeeCount))}<span className="table-meta">{row.overdue ? "مصوبهٔ سررسیدگذشته دارد" : ""}</span></>,
+          <>{fa(done)} از {fa(quorum)}<span className="table-meta">{signs.length ? signs.map((item: Row) => str(item.signerName)).join("، ") : "هنوز امضایی ثبت نشده"}</span></>,
+          <>{badge(row.status, MINUTE_STATUS)}{row.awaitingMe ? <span className="table-meta">در انتظار امضای شما</span> : null}</>,
+          <div className="flex flex-wrap gap-2"><a className="secondary-button" href={`/hr/minute/${row.id}`} target="_blank" rel="noreferrer">چاپ</a>
+            {row.status === "DRAFT" && can("hr:minutes:manage") ? <button className="secondary-button" disabled={busy} onClick={() => {setModalError(""); setMinute(row);}}>ویرایش</button> : null}
+            {actionButtons("minutes", row)}</div>]);
+      });
+    } else if (viewId === "hokm-profiles") {
+      head.push("پرسنل", "کد پرسنلی", "نام پدر", "مدرک / مرتبه", "پست سازمانی", "وضعیت", "عملیات");
+      filtered.forEach(row => push([<span className="request-title">{str(row.name)}</span>, str(row.personnelCode), str(row.fatherName) || "—",
+        <>{str(row.degree) || "—"}<span className="table-meta">{str(row.rank)}</span></>, str(row.orgPosition) || str(row.jobTitle) || "—",
+        row.filled ? <Badge tone="green">تکمیل‌شده</Badge> : <Badge tone="amber">ناقص</Badge>, actionButtons("hokm-profiles", row)]));
     } else if (viewId === "documents") {
       head.push("پرسنل", "کد پرسنلی", "تکمیل پرونده", "مدارک ثبت‌شده", "مدارک ناقص", "عملیات");
       filtered.forEach(row => push([<span className="request-title">{str(row.name)}</span>, str(row.personnelCode), <><b>{fa(nz(row.percent))}٪</b><span className="table-meta">از {fa(Object.keys(FILE_DOCUMENTS).length)} مدرک</span></>, <span className="table-meta">{(row.present || []).map((key: string) => FILE_DOCUMENTS[key as keyof typeof FILE_DOCUMENTS] || key).join("، ") || "—"}</span>, <span className="table-meta">{(row.missing || []).map((key: string) => FILE_DOCUMENTS[key as keyof typeof FILE_DOCUMENTS] || key).join("، ") || "کامل"}</span>, actionButtons("documents", row)]));
@@ -331,6 +419,26 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     return <section className="panel"><div className="section-heading"><h2>اطلاعات پرونده</h2><span>ویرایش تلفن و تحصیلات توسط خودتان</span></div><div className="dialog-body"><div className="directory-grid">{info.map(([label, value]) => <article className="person-card" key={label}><h3>{value}</h3><p>{label}</p></article>)}</div><button className="primary-button mt-5" onClick={() => setCreate({spec: {label: "ویرایش مشخصات", title: "ویرایش تلفن و تحصیلات", endpoint: "/api/hr/profile", method: "PATCH", keys: ["hr:profile:self"], fields: [{name: "phone", label: "تلفن", type: "text", value: str(profile.phone)}, {name: "education", label: "تحصیلات", type: "text", value: str(profile.education)}]}})}>ویرایش مشخصات من</button></div></section>;
   }
 
+  // امضای من — one mark, used everywhere a paper needs it. What is drawn here
+  // is stored as a PNG on the account; the decree and the minute pages print
+  // that image rather than a typed name.
+  function renderSignature(): ReactNode {
+    const signature = data ?? {};
+    const at = signature.at ? fdate(signature.at) : "";
+    return <div className="space-y-6">
+      <section className="panel">
+        <div className="section-heading"><h2>امضای من</h2><span>{signature.exists ? `آخرین ویرایش: ${at}` : "هنوز امضایی ثبت نشده است"}</span></div>
+        <div className="dialog-body">
+          <SignaturePad initial={signature.image ?? null} busy={busy} maxBytes={nz(signature.maxBytes) || 400000}
+            onSave={image => void mutate(() => api("/api/hr/signature", "PUT", {image}), "امضای شما ذخیره شد.")}
+            onClear={() => void mutate(() => api("/api/hr/signature", "DELETE"), "امضای شما حذف شد.")}
+            onError={setModalError} error={modalError}/>
+        </div>
+      </section>
+      <section className="panel"><div className="dialog-body"><p className="table-meta">این تصویر در جایگاه امضاکنندهٔ حکم کارگزینی و در بلوک امضای صورت‌جلسه‌ها چاپ می‌شود. با ماوس، قلم یا انگشت روی کادر بکشید، یا اگر امضای اسکن‌شده دارید آن را بارگذاری کنید. امضای هر شخص فقط با حساب خودش ثبت می‌شود و در هیچ صفحه‌ای قابل تغییر نیست.</p></div></section>
+    </div>;
+  }
+
   function renderPromotion(): ReactNode {
     const grid: {index: number; label: string; employees: {id: string; name: string}[]}[] = data?.grid ?? [];
     const ready: Row[] = data?.ready ?? [];
@@ -394,16 +502,30 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
   const exportButton = (["reports", "team-reports"].includes(viewId || "") && can(viewId === "team-reports" ? "hr:team-reports:export" : "hr:reports:export")) ? <a className="secondary-button" href={`/api/hr/export?scope=${viewId === "team-reports" ? "team" : "all"}`}><Download size={16}/>خروجی CSV</a> : null;
   const createSpec = viewId ? CREATES[viewId] : null;
   const canCreate = createSpec && createSpec.keys.some(can);
-  const searchable = !["dashboard", "inbox", "promotion", "productivity", "file-audit", "my-questionnaires"].includes(viewId || "");
+  // Two views create through a dialog of their own: a حکم needs the template's
+  // item list, and a قالب needs an editable row list.
+  const createButton = viewId === "decrees" && can("hr:decrees:manage")
+    ? <button className="primary-button" disabled={busy} onClick={() => void openHokm()}><Plus size={18}/>صدور حکم</button>
+    : viewId === "decree-templates" && can("hr:decree-templates:manage")
+    ? <button className="primary-button" disabled={busy} onClick={() => {setModalError(""); setTemplate(null);}}><Plus size={18}/>قالب جدید</button>
+    : viewId === "meetings" && can("hr:meetings:manage")
+    ? <button className="primary-button" disabled={busy} onClick={() => {setModalError(""); setMeeting(null);}}><Plus size={18}/>جلسهٔ جدید</button>
+    : ["minutes", "my-minutes"].includes(viewId || "") && can("hr:minutes:manage")
+    ? <button className="primary-button" disabled={busy} onClick={() => {setModalError(""); setMinute(null);}}><Plus size={18}/>صورت‌جلسهٔ جدید</button>
+    : createSpec && canCreate
+    ? <button className="primary-button" onClick={() => {setModalError(""); setCreate({spec: createSpec});}}><Plus size={18}/>{createSpec.label}</button>
+    : null;
+  const searchable = !["dashboard", "inbox", "promotion", "productivity", "file-audit", "my-questionnaires", "signature"].includes(viewId || "");
 
   return <AppShell session={session} title={view?.title || "دسترسی محدود"} section="منابع انسانی" items={navItems} active={viewId || ""} actions={<Link className="icon-button notification-button" href="/hr?view=inbox" aria-label="کارتابل من"><Bell size={19}/></Link>}>
-    <div className="page-heading"><div><span className="eyebrow">{view?.eyebrow || "منابع انسانی"}</span><h1>{view?.title || "دسترسی به این بخش فعال نیست"}</h1><p>{view?.subtitle || "مجوز این بخش باید توسط مدیر زیرسیستم به گروه شما اختصاص یابد."}</p></div><div className="flex flex-wrap gap-2">{createSpec && canCreate && <button className="primary-button" onClick={() => {setModalError(""); setCreate({spec: createSpec});}}><Plus size={18}/>{createSpec.label}</button>}{exportButton}</div></div>
+    <div className="page-heading"><div><span className="eyebrow">{view?.eyebrow || "منابع انسانی"}</span><h1>{view?.title || "دسترسی به این بخش فعال نیست"}</h1><p>{view?.subtitle || "مجوز این بخش باید توسط مدیر زیرسیستم به گروه شما اختصاص یابد."}</p></div><div className="flex flex-wrap gap-2">{createButton}{exportButton}</div></div>
     {error && <div role="alert" className="feedback error"><span>{error}</span><button className="text-button" onClick={() => void refresh()}>تلاش دوباره</button></div>}
     {success && <div role="status" className="feedback success"><CheckCircle2 size={18}/>{success}</div>}
     {loading ? <div role="status" className="loading-state"><Loader2 className="animate-spin" size={23}/>در حال دریافت اطلاعات…</div> : error ? null : !view ? <Empty title="مجوز این بخش را ندارید"><Link href="/hr" className="text-button">بازگشت به پیشخوان</Link></Empty> : <>
       {viewId === "dashboard" && renderDashboard()}
       {viewId === "inbox" && renderInbox()}
       {viewId === "profile" && renderProfile()}
+      {viewId === "signature" && renderSignature()}
       {viewId === "promotion" && renderPromotion()}
       {viewId === "productivity" && renderProductivity()}
       {viewId === "file-audit" && renderAudit()}
@@ -411,12 +533,24 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
       {viewId === "my-features" && renderFeatures(true)}
       {viewId === "my-questionnaires" && renderMyQuestionnaires()}
       {searchable && <div className="toolbar"><label className="search-field"><Search size={18}/><input aria-label="جستجو در این بخش" placeholder="جستجو در این بخش…" value={search} onChange={event => setSearch(event.target.value)}/></label></div>}
-      {!["dashboard", "inbox", "profile", "promotion", "productivity", "file-audit", "features", "my-features", "my-questionnaires"].includes(viewId || "") && renderTable()}
+      {!["dashboard", "inbox", "profile", "signature", "promotion", "productivity", "file-audit", "features", "my-features", "my-questionnaires"].includes(viewId || "") && renderTable()}
     </>}
     {create && <CreateDialog spec={create.spec} values={create.row} ctx={ctx} busy={busy} error={modalError} close={() => {setCreate(null); setModalError("");}} onSubmit={(body, message) => void mutate(() => api(create.spec.endpoint, create.spec.method, body), message, true)}/>}
     {action && (action.spec.id === "answer"
       ? <SurveyAnswerDialog row={action.row} busy={busy} error={modalError} close={() => {setAction(null); setModalError("");}} onSubmit={(body, message) => void mutate(() => api(action.spec.endpoint(action.row), "POST", body), message, true)}/>
       : <ActionDialog spec={action.spec} row={action.row} ctx={ctx} busy={busy} error={modalError} close={() => {setAction(null); setModalError("");}} onSubmit={(body, message) => void mutate(() => api(action.spec.endpoint(action.row), "PATCH", body), message, true)}/>)}
+    {hokmBoard && <HokmDialog board={hokmBoard} signerName={session.name} signerUserId={session.id} busy={busy} error={modalError}
+      close={() => {setHokmBoard(null); setModalError("");}}
+      onSubmit={body => void mutate(async () => {await api("/api/hr/decrees", "POST", body); setHokmBoard(null);}, "حکم صادر شد.", true)}/>}
+    {meeting !== undefined && <MeetingDialog meeting={meeting} employees={data?.employees ?? []} busy={busy} error={modalError}
+      close={() => {setMeeting(undefined); setModalError("");}}
+      onSubmit={body => void mutate(async () => {await api(meeting ? `/api/hr/meetings/${meeting.id}` : "/api/hr/meetings", meeting ? "PATCH" : "POST", body); setMeeting(undefined);}, "جلسه ذخیره شد.", true)}/>}
+    {minute !== undefined && <MinuteDialog minute={minute} meetings={(data?.meetings ?? []) as MeetingListItem[]} employees={data?.employees ?? []} busy={busy} error={modalError}
+      close={() => {setMinute(undefined); setModalError("");}}
+      onSubmit={body => void mutate(async () => {await api(minute ? `/api/hr/minutes/${minute.id}` : "/api/hr/minutes", minute ? "PATCH" : "POST", body); setMinute(undefined);}, "صورت‌جلسه ذخیره شد.", true)}/>}
+    {template !== undefined && <TemplateDialog template={template} busy={busy} error={modalError}
+      close={() => {setTemplate(undefined); setModalError("");}}
+      onSubmit={body => void mutate(async () => {await api(template ? `/api/hr/decree-templates/${template.id}` : "/api/hr/decree-templates", template ? "PATCH" : "POST", body); setTemplate(undefined);}, "قالب حکم ذخیره شد.", true)}/>}
   </AppShell>;
 }
 
@@ -477,6 +611,118 @@ function SurveyAnswerDialog({row, busy, error, close, onSubmit}: {row: Row; busy
   }
   return <Dialog heading="پرسشنامه" title={str(row.title)} busy={busy} close={close}><form onSubmit={submit} className="dialog-body form-stack">{questions.map(question => question.type === "SCALE" ? <label key={question.id}>{question.label}<select name={question.id} required defaultValue=""><option value="">انتخاب…</option>{[1, 2, 3, 4, 5].map(score => <option key={score} value={score}>{fa(score)}</option>)}</select></label> : <label key={question.id}>{question.label}<textarea name={question.id} required rows={3}/></label>)}{error && <div role="alert" className="feedback error">{error}</div>}<div className="dialog-actions"><button type="submit" className="primary-button" disabled={busy}>{busy ? "در حال ثبت…" : "ثبت پاسخ"}</button><button type="button" className="secondary-button" onClick={close} disabled={busy}>انصراف</button></div></form></Dialog>;
 }
+// A signature pad. The canvas is the single source of truth: drawing and
+// uploading both end as pixels on it, and what is saved is always
+// `toDataURL("image/png")` — so an uploaded scan is normalised to the same
+// transparent PNG a drawn signature produces, and neither path can store HTML,
+// SVG or an oversized image.
+const PAD_WIDTH = 900;
+const PAD_HEIGHT = 300;
+function SignaturePad({initial, busy, maxBytes, error, onSave, onClear, onError}: {initial: string | null; busy: boolean; maxBytes: number; error: string; onSave: (image: string) => void; onClear: () => void; onError: (message: string) => void}) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const drawing = useRef(false);
+  const [dirty, setDirty] = useState(false);
+  const [blank, setBlank] = useState(!initial);
+  const file = useRef<HTMLInputElement>(null);
+
+  const context = () => canvas.current?.getContext("2d") ?? null;
+  useEffect(() => {
+    const element = canvas.current;
+    if (!element) return;
+    const ratio = Math.min(2, Math.max(1, (typeof window === "undefined" ? 1 : window.devicePixelRatio) || 1));
+    element.width = PAD_WIDTH * ratio;
+    element.height = PAD_HEIGHT * ratio;
+    const pen = element.getContext("2d");
+    if (!pen) return;
+    pen.setTransform(ratio, 0, 0, ratio, 0, 0);
+    pen.lineWidth = 2.4; pen.lineCap = "round"; pen.lineJoin = "round"; pen.strokeStyle = "#122019";
+    pen.clearRect(0, 0, PAD_WIDTH, PAD_HEIGHT);
+    setDirty(false);
+    if (!initial) {setBlank(true); return;}
+    // The stored signature is the starting drawing: it can be replaced by
+    // drawing over it, or cleared and drawn again.
+    const image = new window.Image();
+    image.onload = () => {pen.clearRect(0, 0, PAD_WIDTH, PAD_HEIGHT); pen.drawImage(image, 0, 0, PAD_WIDTH, PAD_HEIGHT); setBlank(false);};
+    image.onerror = () => setBlank(true);
+    image.src = initial;
+  }, [initial]);
+
+  const point = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {x: (event.clientX - rect.left) * (PAD_WIDTH / (rect.width || PAD_WIDTH)), y: (event.clientY - rect.top) * (PAD_HEIGHT / (rect.height || PAD_HEIGHT))};
+  };
+  function start(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const pen = context(); if (!pen) return;
+    drawing.current = true;
+    const at = point(event);
+    pen.beginPath(); pen.moveTo(at.x, at.y);
+  }
+  function move(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (!drawing.current) return;
+    event.preventDefault();
+    const pen = context(); if (!pen) return;
+    const at = point(event);
+    pen.lineTo(at.x, at.y); pen.stroke();
+    setDirty(true); setBlank(false);
+  }
+  function stop() {drawing.current = false;}
+  function clear() {
+    const pen = context(); if (!pen) return;
+    pen.clearRect(0, 0, PAD_WIDTH, PAD_HEIGHT);
+    setDirty(true); setBlank(true);
+  }
+  function upload(selected: File | undefined) {
+    if (!selected) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(selected.type)) {onError("فقط تصویر PNG، JPG یا WEBP قابل بارگذاری است."); return;}
+    if (selected.size > 4_000_000) {onError("حجم فایل بارگذاری‌شده باید کمتر از ۴ مگابایت باشد."); return;}
+    const reader = new FileReader();
+    reader.onerror = () => onError("خواندن فایل انجام نشد.");
+    reader.onload = () => {
+      const image = new window.Image();
+      image.onerror = () => onError("این فایل یک تصویر معتبر نیست.");
+      image.onload = () => {
+        const pen = context(); if (!pen) return;
+        // Fit inside the pad without stretching, and never enlarge a small scan.
+        const scale = Math.min(PAD_WIDTH / image.width, PAD_HEIGHT / image.height, 1);
+        const width = Math.max(1, image.width * scale), height = Math.max(1, image.height * scale);
+        pen.clearRect(0, 0, PAD_WIDTH, PAD_HEIGHT);
+        pen.drawImage(image, (PAD_WIDTH - width) / 2, (PAD_HEIGHT - height) / 2, width, height);
+        setDirty(true); setBlank(false);
+      };
+      image.src = String(reader.result);
+    };
+    reader.readAsDataURL(selected);
+  }
+  function save() {
+    const element = canvas.current; if (!element) return;
+    if (blank) {onError("ابتدا امضا را بکشید یا بارگذاری کنید."); return;}
+    const image = element.toDataURL("image/png");
+    // The service caps the payload at 400 KB; saying so here saves a round trip.
+    if (image.length * 0.75 > maxBytes) {onError("حجم امضای ترسیم‌شده زیاد است؛ آن را کوچک‌تر بکشید یا تصویر کم‌حجم‌تری بارگذاری کنید."); return;}
+    onSave(image);
+  }
+
+  return <div className="form-stack">
+    <div className="signature-frame">
+      <canvas ref={canvas} className="signature-canvas" width={PAD_WIDTH} height={PAD_HEIGHT} aria-label="کادر ترسیم امضا"
+        onPointerDown={start} onPointerMove={move} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop}/>
+      {blank && <span className="signature-hint">اینجا امضا کنید</span>}
+    </div>
+    {error && <div role="alert" className="feedback error">{error}</div>}
+    <div className="flex flex-wrap gap-2">
+      <button type="button" className="primary-button" disabled={busy || blank || (!dirty && !!initial)} onClick={save}><PenLine size={17}/>{busy ? "در حال ذخیره…" : "ذخیرهٔ امضا"}</button>
+      <button type="button" className="secondary-button" disabled={busy} onClick={clear}>پاک کردن</button>
+      <button type="button" className="secondary-button" disabled={busy} onClick={() => file.current?.click()}><Upload size={16}/>بارگذاری تصویر</button>
+      {initial && <button type="button" className="danger-button" disabled={busy} onClick={onClear}>حذف امضا</button>}
+      <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={event => {upload(event.target.files?.[0]); event.target.value = "";}}/>
+    </div>
+    <span className="table-meta">خروجی به‌صورت PNG شفاف ذخیره می‌شود؛ حداکثر ۴۰۰ کیلوبایت و ۱۲۰۰ پیکسل در هر ضلع.</span>
+  </div>;
+}
+
 function FeatureDialog({catalog, employees, busy, onSubmit, onClose}: {catalog: FeatureCategory[]; employees: {id: string; name: string}[]; busy: boolean; onSubmit: (body: Row, message: string) => void; onClose: () => void}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [categoryId, setCategoryId] = useState(catalog[0]?.id ?? "");
