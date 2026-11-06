@@ -125,22 +125,61 @@ test("the contract list is tenant-scoped in both directions", async () => {
   assert.deepEqual(hidden, []);
 });
 
-test("a decree is numbered, notified once, and frozen afterwards", async () => {
-  const carolActor = actor(carol.userId, "carol", ["hr:decrees:manage", "hr:decrees:notify"]);
-  const first = await contracts.saveDecree(carolActor, {employeeId: alice.profileId, kind: "SALARY_INCREASE", effectiveAt: day(5), baseSalary: 400000000, reason: "افزایش سالانه"});
+test("a decree is issued, approved by a second hand, signed by a third, then notified", async () => {
+  // The clerk also holds the approve key on paper, so the issuer rule is what
+  // stops them, not a missing permission.
+  const clerk = actor(carol.userId, "carol", ["hr:decrees:manage", "hr:decrees:approve", "hr:decrees:notify"]);
+  // The head of کارگزینی also holds the sign key here, so the refusal below is
+  // the segregation rule and not a missing permission.
+  const head = actor(alice.userId, "alice", ["hr:decrees:view", "hr:decrees:approve", "hr:decrees:sign"]);
+  const chief = actor(bob.userId, "bob", ["hr:decrees:view", "hr:decrees:sign"]);
+  // Both hands have a mark of their own in «امضای من»; that mark is what the
+  // service copies onto the paper.
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  for (const who of [alice, bob]) await db.user.update({where: {id: who.userId}, data: {signatureImage: png}});
+  const first = await contracts.saveDecree(clerk, {employeeId: alice.profileId, kind: "SALARY_INCREASE", effectiveAt: day(5), baseSalary: 400000000, reason: "افزایش سالانه"});
   assert.match(first.number, /^ح-\d{4}-\d{4}$/);
-  const second = await contracts.saveDecree(carolActor, {employeeId: bob.profileId, kind: "APPOINTMENT", effectiveAt: day(5), reason: "انتصاب"});
+  const second = await contracts.saveDecree(clerk, {employeeId: bob.profileId, kind: "APPOINTMENT", effectiveAt: day(5), reason: "انتصاب"});
   assert.notEqual(first.number, second.number);
-  // Without notification the decree is still open, and the audit lists it.
-  assert.equal(first.status, "ISSUED");
-  const notified = await contracts.notifyDecree(carolActor, first.id);
+  // Issuing does not make a decree: it waits for the head of کارگزینی.
+  assert.equal(first.status, "PENDING_APPROVAL");
+  // The paper is editable while it is still with the desk…
+  assert.equal((await contracts.saveDecree(clerk, {employeeId: bob.profileId, kind: "BONUS", effectiveAt: day(6)}, second.id)).id, second.id);
+  // …and nobody may communicate it before the company head has signed it.
+  await denied(() => contracts.notifyDecree(clerk, first.id), 409);
+  // The clerk cannot approve their own paper, even holding the key…
+  await denied(() => contracts.approveDecree(clerk, first.id), 409);
+  // …a key without the tenant sees nothing…
+  await denied(() => contracts.approveDecree(actor(dave.userId, "dave", ["hr:decrees:approve"]), first.id), 404);
+  // …and a key that is missing is refused outright.
+  await denied(() => contracts.approveDecree(actor(alice.userId, "alice", ["hr:decrees:view"]), first.id), 403);
+  const approved = await contracts.approveDecree(head, first.id);
+  assert.equal(approved.status, "APPROVED");
+  assert.equal(approved.signatures.find(s => s.stage === "APPROVAL").userId, alice.userId);
+  // Approving twice is refused, and the approver cannot also sign.
+  await denied(() => contracts.approveDecree(head, first.id), 409);
+  await denied(() => contracts.signDecree(head, first.id), 409);
+  const signed = await contracts.signDecree(chief, first.id);
+  assert.equal(signed.status, "SIGNED");
+  // An approved decree is frozen: corrections become a fresh paper.
+  await denied(() => contracts.saveDecree(clerk, {employeeId: alice.profileId, kind: "BONUS", effectiveAt: day(7)}, first.id), 409);
+  const notified = await contracts.notifyDecree(clerk, first.id);
   assert.equal(notified.status, "NOTIFIED");
   assert.ok(notified.notifiedAt);
   // Notifying twice is a no-op, not an error.
-  assert.equal((await contracts.notifyDecree(carolActor, first.id)).id, first.id);
-  // An issued decree is a signed paper: edit it only before it is communicated.
-  await denied(() => contracts.saveDecree(carolActor, {employeeId: alice.profileId, kind: "BONUS", effectiveAt: day(6)}, first.id), 409);
-  assert.equal((await contracts.saveDecree(carolActor, {employeeId: bob.profileId, kind: "BONUS", effectiveAt: day(6)}, second.id)).id, second.id);
+  assert.equal((await contracts.notifyDecree(clerk, first.id)).id, first.id);
+});
+
+test("a stage signer without a stored signature cannot sign", async () => {
+  // Carol has a personnel file but no «امضای من»; a typed name is not a signature.
+  const clerk = actor(carol.userId, "carol", ["hr:decrees:manage"]);
+  const head = actor(alice.userId, "alice", ["hr:decrees:approve"]);
+  await db.user.update({where: {id: carol.userId}, data: {signatureImage: null}});
+  const decree = await contracts.saveDecree(clerk, {employeeId: bob.profileId, kind: "BONUS", effectiveAt: day(9), baseSalary: 100000000});
+  await db.user.update({where: {id: alice.userId}, data: {signatureImage: null}});
+  await denied(() => contracts.approveDecree(head, decree.id), 409);
+  // The paper stayed where it was.
+  assert.equal((await db.hrDecree.findUnique({where: {id: decree.id}})).status, "PENDING_APPROVAL");
 });
 
 test("a decree cannot borrow another person's file", async () => {

@@ -61,7 +61,20 @@ Every new table carries `companyId`, but nobody submits it: `tenantOf` derives i
 
 ## Decrees
 
-Numbers are `ح-<Persian year>-<serial>` from 1001 up, per company, using ICU for the year (no calendar arithmetic in the code). Issued decrees are signed papers: once `notifiedAt` is set they are frozen (409 «حکم اصلاحی صادر کنید»). ابلاغ is the moment the person is actually told; it closes the audit finding and is idempotent. The audit waits three days (`DECREE_NOTIFY_DAYS`) before complaining.
+Numbers are `ح-<Persian year>-<serial>` from 1001 up, per company, using ICU for the year (no calendar arithmetic in the code).
+
+A decree is issued by the کارگزینی desk and then passes through two hands before it exists as a paper anyone may act on:
+
+| Stage | Who | Permission | Status after |
+| --- | --- | --- | --- |
+| صدور | کارشناس کارگزینی | `hr:decrees:manage` | `PENDING_APPROVAL` — «در انتظار تأیید رئیس کارگزینی» |
+| تأیید | رئیس کارگزینی | `hr:decrees:approve` | `APPROVED` — «تأییدشده — در انتظار امضای رئیس شرکت» |
+| امضا | رئیس شرکت | `hr:decrees:sign` | `SIGNED` — «امضاشده» |
+| ابلاغ | کارگزینی | `hr:decrees:notify` | `NOTIFIED` — «ابلاغ‌شده» |
+
+The chain is enforced by segregation of duties, not by etiquette: the issuer cannot approve their own decree, the approver cannot sign the decree they approved, and `notifyDecree` refuses anything not `SIGNED` (409 «حکم تا امضای رئیس شرکت قابل ابلاغ نیست»). Approving or signing requires an `HrEmployee` linked to the account and a stored signature; without one the service stops with «ابتدا در بخش «امضای من» امضای خود را ثبت کنید» rather than printing a typed name. Each stage writes an `HrDecreeSignature` row (`APPROVAL` / `SIGN`) with the person's name, title and image, and the row is unique per stage.
+
+A paper is editable only while `PENDING_APPROVAL`; after approval it is frozen (409 «حکم پس از تأیید قابل ویرایش نیست؛ حکم اصلاحی صادر کنید»). ابلاغ is the moment the person is actually told; it closes the audit finding and is idempotent. The audit waits three days (`DECREE_NOTIFY_DAYS`) before complaining, and only counts `SIGNED` papers — one still in the chain is not behind on its ابلاغ. `ISSUED` survives only as the status of papers imported before the chain existed; the migration folded them into `PENDING_APPROVAL`.
 
 ## The حکم is a layout the organization owns
 
@@ -108,29 +121,29 @@ Rule 15 takes its findings from `options.safety` because the HSE violation model
 
 ## Service API — `app/lib/hr-contracts.ts`, `app/lib/hr-hokm.ts`
 
-`listContracts`, `saveContract`, `renewContract`, `terminateContract`, `listDecrees`, `saveDecree`, `notifyDecree`, `listDocuments`, `saveDocument`, `saveFileFacts`, `listContractors`, `saveContractor`, `fileAudit`, `contractStats`.
+`listContracts`, `saveContract`, `renewContract`, `terminateContract`, `listDecrees`, `saveDecree`, `approveDecree`, `signDecree`, `notifyDecree`, `listDocuments`, `saveDocument`, `saveFileFacts`, `listContractors`, `saveContractor`, `fileAudit`, `contractStats`.
 
 `hr-hokm.ts` owns the template catalogue: `listTemplates`, `saveTemplate`, `templateBoard` (the picker the حکم dialog opens), `listHokmProfiles`, `saveHokmProfile`, `hokmSheet`. The dependency runs one way — `hr-contracts` imports `replaceDecreeItems` and `itemTotals` from `hr-hokm`, never the reverse.
 
-Wired into `readHr`/`writeHr` as `contracts`, `decrees`, `decree-templates`, `hokm-board`, `hokm-profiles`, `documents`, `file-audit`, `contractors`, and `file-facts` (a PATCH that records the seven file facts). Renew, terminate and notify arrive as `{action: "renew" | "terminate" | "notify"}` on the row id, the same dispatch pattern the rest of HR uses. `hokm-profiles/{id}` is keyed by the personnel file, not by the profile row, so a save is an upsert.
+Wired into `readHr`/`writeHr` as `contracts`, `decrees`, `decree-templates`, `hokm-board`, `hokm-profiles`, `documents`, `file-audit`, `contractors`, and `file-facts` (a PATCH that records the seven file facts). Renew, terminate, approve, sign and notify arrive as `{action: "renew" | "terminate" | "approve" | "sign" | "notify"}` on the row id, the same dispatch pattern the rest of HR uses. `hokm-profiles/{id}` is keyed by the personnel file, not by the profile row, so a save is an upsert.
 
 ## Signatures — امضای من
 
 `User.signatureImage` holds one mark per account, reused wherever the portal puts a person's signature on paper (a حکم's signer line, a صورت‌جلسه's signature block). The rules are pure and live in `app/lib/signature-image.ts`: PNG only, ≤ 400 KB, ≤ 1200 px a side, re-encoded from the decoded bytes so the data URL cannot smuggle another MIME type. There is deliberately no permission key — the signature is the person's own, so whoever holds the account may set it and only their own (`/api/hr/signature`).
 
-How each paper treats the mark differs, on purpose. A حکم is a *reference*: the print page fetches the signer's current image, so a re-drawn signature updates a reprint. A صورت‌جلسه is the *record*: the image is copied into `HrMinuteSignature.image` at the instant it is given, so the signed paper keeps the mark that was actually put on it.
+How each paper treats the mark is now the same, on purpose. A حکم is a *record*: approving and signing copy the image into `HrDecreeSignature.image`, so a reprint shows the mark that was on the paper at that instant and re-drawing your signature tomorrow cannot restyle a signed decree. A صورت‌جلسه follows the same rule with `HrMinuteSignature.image`. Only a paper issued before the chain has no stage marks, and only that one falls back to the typed `signer` / `signerTitle` fields and the account's current image.
 
 ## Permissions and views
 
-`hr:contracts:{view,manage}`, `hr:decrees:{view,manage,notify}`, `hr:decree-templates:manage`, `hr:documents:{view,manage}`, `hr:file-audit:view`, `hr:contractors:{view,manage}`, `hr:team-files:view`. Group templates: **کارگزینی منابع انسانی** (the whole desk) and **کارگزینی تیم** (team files, read-only). `hr-supervisor` already picks up `hr:team-files:view` through its `hr:team*` rule; `hr:decree-templates` joined the کارگزینی regex.
+`hr:contracts:{view,manage}`, `hr:decrees:{view,manage,approve,sign,notify}`, `hr:decree-templates:manage`, `hr:documents:{view,manage}`, `hr:file-audit:view`, `hr:contractors:{view,manage}`, `hr:team-files:view`. Group templates: **کارگزینی منابع انسانی** (the whole desk, up to ابلاغ), **کارگزینی تیم** (team files, read-only), **رئیس کارگزینی** (`view` + `approve`, plus contracts/documents/file-audit read) and **رئیس شرکت** (`view` + `sign` only). `hr-supervisor` already picks up `hr:team-files:view` through its `hr:team*` rule; `hr:decree-templates` joined the کارگزینی regex.
 
-Views: `contracts` (قرارداد و حکم), `decrees`, `decree-templates`, `hokm-profiles`, `documents`, `file-audit`, `contractors`, `team-files`. Each audit finding links to the page where it is fixed, derived from `finding.action` (`notify:<number>` goes to decrees, `renew`/`probation` to contracts, `documents`/`contractors` where they say, `profile` to the people page). The decrees list carries «جمع حکم» and a «چاپ حکم» link to `/hr/decree/[id]`.
+Views: `contracts` (قرارداد و حکم), `decrees`, `decree-templates`, `hokm-profiles`, `documents`, `file-audit`, `contractors`, `team-files`. Each audit finding links to the page where it is fixed, derived from `finding.action` (`notify:<number>` goes to decrees, `renew`/`probation` to contracts, `documents`/`contractors` where they say, `profile` to the people page). The decrees list carries «جمع حکم» and a link to `/hr/decree/[id]` — «چاپ حکم» once signed, «پیش‌نمایش حکم» before that. An unsigned paper prints with a «پیش‌نویس» banner, so a draft can be checked without being mistaken for a decree.
 
 ## Seed
 
 `prisma/prototype-files.ts` turns the prototype roster's own facts — «دائم / پیمانی / یک‌ساله / آزمایشی» plus a start date — into an honest ledger: contract periods follow from the start date to today, past periods are `ENDED`, the one covering today is `ACTIVE`, and a دائم engagement is a single open row. It also writes one decree per file (every ninth still un-notified, so the «حکم ابلاغ‌نشده» rule has something true to point at), 6–10 of the ten papers (so completion percentages differ), and two contractor companies. The national ID is derived from the account id with a valid checksum rather than left blank. It runs inside the prototype import and is idempotent: a file that already has a contract is left alone.
 
-`prisma/seed.ts` adds the demo the papers need: one حکم layout («حکم کارگزینی شرکت») with four lettered item rules, the مشخصات حکم of the director, and one issued decree whose جمع is ۱٫۲۰۳٫۲۹۵٫۷۱۵ ریال — the reference paper's own figure, spelled on the page. Every block is guarded (`findFirst`/`findUnique` before create), so a second run keeps whatever the administrator has since edited.
+`prisma/seed.ts` adds the demo the papers need: one حکم layout («حکم کارگزینی شرکت») with four lettered item rules, the مشخصات حکم of the director, and one decree whose جمع is ۱٫۲۰۳٫۲۹۵٫۷۱۵ ریال — the reference paper's own figure, spelled on the page. That decree has already been through the chain: `EMP-1020` (رئیس کارگزینی) approved it and `EMP-1021` (رئیس شرکت) signed it, so the printed specimen shows two real signatures, each copied from its owner's «امضای من» the same way the service copies them. Every block is guarded (`findFirst`/`findUnique` before create), and the chain never pulls a `NOTIFIED` decree back to `SIGNED`, so a second run keeps whatever the administrator has since edited.
 
 ## Tests
 
@@ -138,9 +151,9 @@ Views: `contracts` (قرارداد و حکم), `decrees`, `decree-templates`, `h
 
 `tests/hr-hokm-rules.test.cjs` — the pure layer of حکم and امضا, no database: the amount in words (including the reference total) and its rejections, the row lettering, `normalizeItems` against a catalogue, the totals, and every signature rejection (not a PNG, wrong MIME, oversized).
 
-`tests/hr-contracts.test.cjs` — the service against a disposable schema: tenant derivation and 404 for a foreign file, one-active-contract, renewal and termination, the 90-day probation, decree numbering/notification/freeze, the document checklist, a live audit over the database, and the team scope coming from the chart rather than the drifted `HrEmployee.managerId` cache.
+`tests/hr-contracts.test.cjs` — the service against a disposable schema: tenant derivation and 404 for a foreign file, one-active-contract, renewal and termination, the 90-day probation, decree numbering and the full chain (issue → approve → sign → notify, including the refusals: the issuer cannot approve, the approver cannot sign, an unsigned paper cannot be communicated, a signed one is frozen, a signer without a stored mark is stopped), the document checklist, a live audit over the database, and the team scope coming from the chart rather than the drifted `HrEmployee.managerId` cache.
 
-`tests/hr-hokm.test.cjs` — the same schema pattern: templates unique per company and scoped to it, decree rows copied from the catalogue with their labels and letters, the جمع and the spelled amount, the snapshot surviving a catalogue edit, the signer's image, and مشخصات حکم saving one tab at a time.
+`tests/hr-hokm.test.cjs` — the same schema pattern: templates unique per company and scoped to it, decree rows copied from the catalogue with their labels and letters, the جمع and the spelled amount, the snapshot surviving a catalogue edit, both stage marks being snapshots of the signers' own signatures, and مشخصات حکم saving one tab at a time.
 
 ```bash
 npx prisma generate

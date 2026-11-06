@@ -36,6 +36,8 @@ logs/
 *.html
 *.tmp
 *.temp
+# Word's own lock file next to an open document (~$-ROADMAP-fa.docx)
+~$*
 tmp/
 temp/
 

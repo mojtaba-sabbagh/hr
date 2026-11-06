@@ -84,7 +84,9 @@ export async function seedPrototypeFiles(db: Prisma.TransactionClient, companyId
     const number = `ح-۱۴۰۳-${1001 + index}`;
     if (!(await db.hrDecree.findFirst({where: {companyId, number}, select: {id: true}}))) {
       await db.hrDecree.create({data: {companyId, employeeId, number, kind: index % 4 === 0 ? "APPOINTMENT" : "CONFIRMATION",
-        status: unnotified ? "ISSUED" : "NOTIFIED", issuedAt, effectiveAt: new Date(issuedAt.getTime() + DAY), notifiedAt: unnotified ? null : day(-39),
+        // Imported papers arrive already signed: they predate the approval chain,
+        // so they carry a typed signer and no stage marks.
+        status: unnotified ? "SIGNED" : "NOTIFIED", issuedAt, effectiveAt: new Date(issuedAt.getTime() + DAY), notifiedAt: unnotified ? null : day(-39),
         signer: "معاونت توسعه", baseSalary, reason: "حکم نمونهٔ ورود اطلاعات", createdByName: "ورود اطلاعات نمونه"}});
       report.decrees++;
     }

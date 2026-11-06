@@ -9,7 +9,8 @@
 // present, because a meeting's minute is normally the meeting's people. The
 // secretary untick anyone who did not come.
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X, Plus, Trash2, Sparkles } from "lucide-react";
+import { postAi, type DraftReply } from "./ai-client";
 
 type Employee = {id: string; name: string; personnelCode?: string; department?: string};
 export type MeetingSeat = {employeeId: string; role: string; employee?: Employee | null};
@@ -84,6 +85,31 @@ export function MinuteDialog({minute, meetings, employees, busy, error, close, o
       : (meetings[0]?.members ?? []).map(seat => ({employeeId: seat.employeeId, present: true})));
   const [resolutions, setResolutions] = useState<ResolutionInput[]>(() =>
     minute ? (minute.resolutions ?? []).map((row: Record<string, any>) => ({itemNo: row.itemNo, text: row.text, result: row.result !== false, ownerId: row.ownerId ?? "", dueDate: row.dueDate ? String(row.dueDate).slice(0, 10) : ""})) : [blankResolution(0)]);
+  // سه فیلدی که به مدل می‌روند کنترل‌شده‌اند، نه فقط خوانده‌شده با FormData:
+  // برای پیش‌نویس باید همان لحظه در دسترس باشند، پیش از ذخیرهٔ فرم.
+  const [summary, setSummary] = useState(String(minute?.summary ?? ""));
+  const [date, setDate] = useState(minute?.date ? String(minute.date).slice(0, 10) : todayISO());
+  const [location, setLocation] = useState(String(minute?.location ?? ""));
+  const [drafting, setDrafting] = useState(false);
+  const [draftNote, setDraftNote] = useState("");
+
+  async function suggest() {
+    setDraftNote("");
+    setDrafting(true);
+    const context = {
+      meeting: meetings.find(item => item.id === meetingId)?.name ?? "",
+      date, location,
+      attendees: attendees.filter(row => row.present).map(row => nameOf(row.employeeId)),
+      resolutions: resolutions.filter(row => row.text.trim()).map(row => ({text: row.text, owner: row.ownerId ? nameOf(row.ownerId) : "", due: row.dueDate})),
+    };
+    const reply = await postAi<DraftReply>("minute", minute?.id ? {minuteId: minute.id} : {context});
+    setDrafting(false);
+    if (!reply.ok) { setDraftNote(reply.message); return; }
+    if (!reply.data.ok) { setDraftNote(reply.data.message || "پیش‌نویس آماده نشد."); return; }
+    // متن موجود پاک نمی‌شود: پیش‌نویس زیر آن اضافه می‌شود تا دبیر انتخاب کند.
+    setSummary(previous => (previous.trim() ? `${previous.trim()}\n\n${reply.data.draft}` : reply.data.draft));
+    setDraftNote("پیش‌نویس افزوده شد؛ آن را ویرایش کنید.");
+  }
 
   // Picking another meeting for a *new* minute re-seats the room from it.
   function pickMeeting(id: string) {
@@ -112,11 +138,20 @@ export function MinuteDialog({minute, meetings, employees, busy, error, close, o
     <div className="form-columns">
       <label>جلسه<select value={meetingId} onChange={event => pickMeeting(event.target.value)} disabled={editing} required>{meetings.map(item => <option key={item.id} value={item.id}>{item.name}{item.period ? ` — ${item.period}` : ""}</option>)}</select></label>
       <label>شمارهٔ صورت‌جلسه<input name="number" required defaultValue={minute?.number ?? ""} maxLength={60}/></label>
-      <label>تاریخ<input name="date" type="date" required defaultValue={minute?.date ? String(minute.date).slice(0, 10) : todayISO()}/></label>
+      <label>تاریخ<input name="date" type="date" required value={date} onChange={event => setDate(event.target.value)}/></label>
       <label>ساعت<input name="time" type="time" defaultValue={minute?.time ?? ""}/></label>
-      <label>محل جلسه<input name="location" defaultValue={minute?.location ?? ""} maxLength={200}/></label>
+      <label>محل جلسه<input name="location" value={location} onChange={event => setLocation(event.target.value)} maxLength={200}/></label>
     </div>
-    <label>خلاصهٔ مذاکرات<textarea name="summary" rows={4} defaultValue={minute?.summary ?? ""} maxLength={20000}/></label>
+    <section>
+      <div className="section-heading">
+        <h2>خلاصهٔ مذاکرات</h2>
+        <button type="button" className="secondary-button" onClick={() => void suggest()} disabled={drafting}>
+          <Sparkles size={16}/>{drafting ? "در حال نوشتن…" : "پیش‌نویس از مصوبات"}
+        </button>
+      </div>
+      <textarea name="summary" aria-label="خلاصهٔ مذاکرات" rows={4} value={summary} onChange={event => setSummary(event.target.value)} maxLength={20000}/>
+      {draftNote && <p className="form-hint">{draftNote}</p>}
+    </section>
 
     <section>
       <div className="section-heading"><h2>حاضران</h2><span>{attendees.filter(row => row.present).length} حاضر از {attendees.length} نفر دعوت‌شده</span></div>

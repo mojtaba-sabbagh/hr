@@ -168,8 +168,11 @@ export function auditFiles(files: AuditableFile[], options: AuditOptions = {}) {
     }
   }
   // 15. Repeated safety violations, supplied by the HSE subsystem.
+  // A finding about someone outside the audited set is not a row of this audit:
+  // HSE hands in a tenant-wide list, while the caller may be looking at a team.
   for (const finding of options.safety ?? []) {
-    const file = files.find(row => row.id === finding.employeeId) ?? null;
+    const file = files.find(row => row.id === finding.employeeId);
+    if (!file) continue;
     add(finding.severity, "safety-violation", finding.rule || "تخلف ایمنی تکرارشونده", file, finding.text, "");
   }
 

@@ -91,38 +91,23 @@ export async function saveAttendance(actor: SessionUser, input: unknown) {
   if (!employee.active) throw new AccessError(400, "پرسنل غیرفعال است");
   const workDate = dateField(body.workDate, "روز کاری");
   const status = option(body.status, ATTENDANCE_STATUS, "وضعیت حضور");
-  let clockIn: string | null = null, clockOut: string | null = null, workedMinutes = 0, breakMinutes = 0, endNextDay = false;
+  let clockIn: string | null = null, clockOut: string | null = null, workedMinutes = 0, breakMinutes = 0, endNextDay = false, overtimeMinutes = 0;
   if (status === "PRESENT") {
     clockIn = timeField(body.clockIn, "ساعت ورود"); clockOut = timeField(body.clockOut, "ساعت خروج"); endNextDay = bool(body.endNextDay);
     breakMinutes = integer(body.breakMinutes ?? 0, "استراحت به دقیقه", 0, 1440);
     workedMinutes = duration(clockIn, clockOut, endNextDay) - breakMinutes;
     if (workedMinutes <= 0) throw new AccessError(400, "زمان استراحت باید کمتر از بازه حضور باشد");
+    // اضافه‌کاری صریح، چون خط ۴۰ ساعت موتور خستگی باید قابل دفاع باشد. صفر
+    // یعنی «ثبت نشده» و موتور خودش از کارکرد منهای شیفت برآورد می‌کند.
+    overtimeMinutes = integer(body.overtimeMinutes ?? 0, "اضافه‌کاری به دقیقه", 0, 60000);
   }
-  const data = {status, clockIn, clockOut, endNextDay, breakMinutes, workedMinutes, note: optionalText(body.note, "توضیح"), recordedBy: actor.id};
+  const data = {status, clockIn, clockOut, endNextDay, breakMinutes, workedMinutes, overtimeMinutes, note: optionalText(body.note, "توضیح"), recordedBy: actor.id};
   return prisma.hrAttendance.upsert({where: {employeeId_workDate: {employeeId: employee.id, workDate}}, create: {...data, employeeId: employee.id, workDate}, update: data});
 }
 export async function listShifts(actor: SessionUser, mine: boolean) {
   const scope = await (mine ? employeeScope(actor, [], [], ["hr:shifts:self"]) : employeeScope(actor, ["hr:shifts:view", "hr:shifts:manage"], ["hr:shifts:team"]));
   const manage = !mine && hasPermission(actor, "hr:shifts:manage");
   return {rows: await prisma.hrShift.findMany({where: {employee: scope, ...(manage ? {} : {published: true})}, include: {employee: {select: employeeOption}}, orderBy: [{workDate: "desc"}, {employee: {name: "asc"}}], take: 300}), employees: manage ? await prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor)}, select: employeeOption, orderBy: {name: "asc"}}) : []};
-}
-export async function saveShift(actor: SessionUser, input: unknown) {
-  requireAny(actor, ["hr:shifts:manage"]);
-  const body = bodyObject(input);
-  const employee = await scopedEmployee(prisma, actor, body.employeeId, ["hr:shifts:manage"]);
-  if (!employee.active) throw new AccessError(400, "پرسنل غیرفعال است");
-  const workDate = dateField(body.workDate, "روز شیفت"); const kind = option(body.kind, SHIFT_KINDS, "نوع شیفت");
-  const working = !["REST", "LEAVE"].includes(kind);
-  const startTime = working ? timeField(body.startTime, "شروع شیفت") : null;
-  const endTime = working ? timeField(body.endTime, "پایان شیفت") : null;
-  const endNextDay = working && bool(body.endNextDay);
-  if (startTime && endTime) duration(startTime, endTime, endNextDay);
-  const data = {kind, startTime, endTime, endNextDay, note: optionalText(body.note, "توضیح"), published: bool(body.published)};
-  return prisma.$transaction(async tx => {
-    const row = await tx.hrShift.upsert({where: {employeeId_workDate: {employeeId: employee.id, workDate}}, create: {...data, employeeId: employee.id, workDate}, update: data});
-    if (data.published) await notifyHr(tx, employee.id, "برنامه شیفت به‌روزرسانی شد", `${body.workDate}: ${SHIFT_KINDS[kind]}`, "my-shifts");
-    return row;
-  });
 }
 export async function listEvaluations(actor: SessionUser, mine: boolean) {
   const global = ["hr:performance:view", "hr:performance:manage", "hr:performance:approve"];

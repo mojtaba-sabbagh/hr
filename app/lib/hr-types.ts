@@ -7,7 +7,9 @@ export const ATTENDANCE_STATUS = {PRESENT: "حاضر", ABSENT: "غایب", LEAVE
 export const CONTRACT_KINDS = {PERMANENT: "دائم", PAYMANI: "پیمانی", ANNUAL: "قرارداد یک‌ساله", FIXED_TERM: "قرارداد موقت (مدت معین)", PROBATION: "آزمایشی (۳ ماه)", PROJECT: "پروژه‌ای", CONTRACTOR: "شرکتی (پیمانکار)"};
 export const CONTRACT_STATUS = {ACTIVE: "فعال", ENDED: "پایان‌یافته", TERMINATED: "خاتمهٔ همکاری"};
 export const DECREE_KINDS = {APPOINTMENT: "انتصاب / تغییر سمت", SALARY_INCREASE: "افزایش حقوق", JOB_GROUP: "تغییر گروه شغلی", TRANSFER: "انتقال به واحد دیگر", CONFIRMATION: "تثبیت / تبدیل وضعیت", RENEWAL: "حکم تمدید قرارداد", BONUS: "پاداش و کارانه", ANNUAL_RAISE: "افزایش سالانهٔ گروهی", TERMINATION: "خاتمهٔ همکاری"};
-export const DECREE_STATUS = {ISSUED: "صادرشده", NOTIFIED: "ابلاغ‌شده", CANCELLED: "لغوشده"};
+// زنجیرهٔ حکم: صدور → تأیید رئیس کارگزینی → امضای رئیس شرکت → ابلاغ.
+// `ISSUED` فقط روی ردیف‌های پیش از این زنجیره می‌ماند.
+export const DECREE_STATUS = {PENDING_APPROVAL: "در انتظار تأیید رئیس کارگزینی", APPROVED: "تأییدشده — در انتظار امضای رئیس شرکت", SIGNED: "امضاشده", NOTIFIED: "ابلاغ‌شده", CANCELLED: "لغوشده", ISSUED: "صادرشده (پیش از زنجیرهٔ تأیید)"};
 // The ten mandatory papers of a personnel file, in the prototype's order.
 export const FILE_DOCUMENTS = {ID_BOOK: "شناسنامه", NATIONAL_CARD: "کارت ملی", DEGREE: "مدرک تحصیلی", MILITARY: "کارت پایان خدمت / معافیت", PHOTO: "عکس پرسنلی", CLEARANCE: "گواهی عدم سوء‌پیشینه", INSURANCE: "شماره بیمه", MEDICINE: "فرم طب کار", CONTRACT: "قرارداد امضاشده", BANK: "شماره حساب"};
 export const DOCUMENT_STATUS = {PRESENT: "موجود", MISSING: "ناقص"};
@@ -78,11 +80,31 @@ export const PROMOTION_STATUS = {OPEN: "در فرآیند ارتقا", APPROVED:
 export const OKR_STATUS = {ACTIVE: "فعال", DONE: "محقق شده", ARCHIVED: "بایگانی شده"};
 export const PLAN_STATUS = {DRAFT: "پیش‌نویس", APPROVED: "تأییدشده برای اجرا"};
 // سناریوهای چیدمان شیفت سه‌ماهه: ضرایب بازده، اضافه‌کاری، خطا و فرسودگی.
-export const PLAN_SCENARIOS = {
-  HIGH: {key: "HIGH", title: "پلن پربازده (پرریسک)", desc: "حداکثر استفاده از نیروهای پربازده؛ ریسک فرسودگی و خطای انسانی بالاتر است.", outputMult: 1.22, overtimeMult: 2.1, errorRiskMult: 2.4, burnoutMult: 2.6, topShare: 0.7},
-  MID: {key: "MID", title: "پلن متوسط (بهینه)", desc: "توازن بین بهره‌وری و سلامت نیروها با ریسک قابل‌مدیریت.", outputMult: 1.10, overtimeMult: 1.3, errorRiskMult: 1.3, burnoutMult: 1.4, topShare: 0.5},
-  LOW: {key: "LOW", title: "پلن کم‌ریسک (محافظه‌کارانه)", desc: "ادامه روش فعلی چیدمان شیفت با کمترین ریسک و بازده نزدیک به وضع موجود.", outputMult: 1.0, overtimeMult: 1.0, errorRiskMult: 1.0, burnoutMult: 1.0, topShare: 0.33},
-} as const;
+// پلن چهارم («فوق‌العاده») فقط با تأیید قرمز پذیرفته می‌شود و مرخصی‌های
+// تأییدشدهٔ بازه را معلق می‌کند؛ به همین دلیل دو پرچم جدا دارد.
+export type PlanScenarioKey = "HIGH" | "MID" | "LOW" | "EXTREME";
+export type PlanScenario = {key: PlanScenarioKey; title: string; desc: string; outputMult: number; overtimeMult: number; errorRiskMult: number; burnoutMult: number; topShare: number; requiresConfirmation: boolean; leaveEffect: boolean};
+export const PLAN_SCENARIOS: Record<PlanScenarioKey, PlanScenario> = {
+  LOW: {key: "LOW", title: "پلن کم‌ریسک (محافظه‌کارانه)", desc: "ادامه روش فعلی چیدمان شیفت با کمترین ریسک و بازده نزدیک به وضع موجود.", outputMult: 1.0, overtimeMult: 1.0, errorRiskMult: 1.0, burnoutMult: 1.0, topShare: 0.33, requiresConfirmation: false, leaveEffect: false},
+  MID: {key: "MID", title: "پلن متوسط (بهینه)", desc: "توازن بین بهره‌وری و سلامت نیروها با ریسک قابل‌مدیریت.", outputMult: 1.10, overtimeMult: 1.3, errorRiskMult: 1.3, burnoutMult: 1.4, topShare: 0.5, requiresConfirmation: false, leaveEffect: false},
+  HIGH: {key: "HIGH", title: "پلن پربازده (پرریسک)", desc: "حداکثر استفاده از نیروهای پربازده؛ ریسک فرسودگی و خطای انسانی بالاتر است.", outputMult: 1.22, overtimeMult: 2.1, errorRiskMult: 2.4, burnoutMult: 2.6, topShare: 0.7, requiresConfirmation: false, leaveEffect: false},
+  EXTREME: {key: "EXTREME", title: "پلن فوق‌العاده (بحرانی)", desc: "حداکثر بازده با تعلیق مرخصی‌های تأییدشده و اضافه‌کاری سنگین؛ فقط با تأیید قرمز و برای شرایط بحرانی.", outputMult: 1.38, overtimeMult: 3.6, errorRiskMult: 3.8, burnoutMult: 4.4, topShare: 0.95, requiresConfirmation: true, leaveEffect: true},
+};
+
+// ── آستانه‌های موتورهای هوش مصنوعی ────────────────────────────────────
+// خط ۴۰ ساعت یک ادعای ایمنی کار است؛ پیش از عوض کردنش با ممیز کار بحث کنید.
+export const FATIGUE_OVERTIME_MINUTES = 40 * 60;
+export const FATIGUE_NIGHT_COUNT = 5;
+export const FATIGUE_LOOKBACK_DAYS = 30;
+export const FATIGUE_NIGHT_WINDOW_DAYS = 7;
+export const FATIGUE_DEDUPE_DAYS = 14;
+export const FATIGUE_TRAINING_COURSE = "مدیریت خستگی";
+// معیار «تأیید کهنه» بین کارتابل و بینش‌ها یکی است.
+export const STALE_APPROVAL_DAYS = 3;
+// اضافه‌کاری ماهانهٔ مبنا برای درخواست بودجه = ۴۲۰ دقیقه × (ضریب − ۱).
+export const OVERTIME_BUDGET_MINUTES = 420;
+// برنامه آزمایشی سه‌ماهه است؛ این روزها پنجرهٔ تصمیم آن را می‌سازند.
+export const PROBATION_DAYS = 90;
 export type HrRow = {id: string; [key: string]: unknown};
 export type EmployeeOption = {id: string; name: string; personnelCode: string; department: string; userId: string | null; managerId: string | null; active: boolean};
 export type SurveyQuestion = {id: string; label: string; type: "TEXT" | "SCALE"};

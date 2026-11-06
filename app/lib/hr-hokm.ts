@@ -29,10 +29,11 @@ import { ITEM_KINDS, ITEM_LETTERS, MAX_ITEMS, itemTotals, normalizeItems, number
 // The item rows themselves are pure and live in `hokm-items.ts`; they are
 // re-exported here so the rest of the subsystem keeps one import.
 export { ITEM_KINDS, ITEM_LETTERS, itemTotals, letterFor, normalizeItems } from "./hokm-items";
-export const HOKM_STATUS = {DRAFT: "پیش‌نویس", ISSUED: "صادرشده", NOTIFIED: "ابلاغ‌شده", CANCELLED: "لغوشده"} as const;
+// The status vocabulary lives in one place, `DECREE_STATUS` in hr-types, because
+// the UI and the chain now share it.
 
 const templateKeys = ["hr:decree-templates:manage", "hr:decrees:manage"];
-const decreeViewKeys = ["hr:decrees:view", "hr:decrees:manage", "hr:decrees:notify"];
+const decreeViewKeys = ["hr:decrees:view", "hr:decrees:manage", "hr:decrees:approve", "hr:decrees:sign", "hr:decrees:notify"];
 
 /**
  * Writes the item rows of a decree, replacing whatever was there.
@@ -204,15 +205,18 @@ const sheetInclude = {
   template: {include: {items: {orderBy: {sortOrder: "asc" as const}}}},
   items: {orderBy: {sortOrder: "asc" as const}},
   company: {select: {id: true, name: true}},
+  // The two stage marks, captured onto the paper when each person signed it.
+  signatures: {orderBy: {signedAt: "asc" as const}, select: {stage: true, name: true, title: true, image: true, signedAt: true}},
 } as const;
 
 /**
  * Everything the printable page needs, in one read.
  *
- * The signature is fetched here as an image, at the moment of reading: an
- * issued decree that was printed before a signer changed their signature keeps
- * its printed copy, but the portal always shows the current mark of the named
- * signer. (A minute, which *is* the signature, snaps it — see hr-meetings.)
+ * The signatures are the ones snapshotted on the decree (see hr-contracts):
+ * the mark on the paper is the mark that was there when it was signed, not
+ * whatever the account carries today. A decree issued before the approval
+ * chain fell back to a typed name and the signer's current image, and that
+ * fallback is kept so an old paper still prints.
  */
 export async function hokmSheet(actor: SessionUser, id: string) {
   requireAny(actor, decreeViewKeys);
@@ -220,12 +224,17 @@ export async function hokmSheet(actor: SessionUser, id: string) {
   const decree = await prisma.hrDecree.findFirst({where: {id, employee: scope}, include: sheetInclude});
   if (!decree) throw new AccessError(404, "حکم یافت نشد یا خارج از حوزه دسترسی شماست");
   const totals = itemTotals(decree.items);
+  const approval = decree.signatures.find(signature => signature.stage === "APPROVAL") ?? null;
+  const signing = decree.signatures.find(signature => signature.stage === "SIGN") ?? null;
   return {
     decree,
     items: decree.items,
     totals,
     words: amountInWords(Math.max(totals.net, 0)),
-    signature: await signatureOf(decree.signerUserId),
+    approval,
+    signing,
+    // Legacy: papers from before the chain carry a typed name, not a captured mark.
+    signature: signing ? null : await signatureOf(decree.signerUserId),
     signerName: decree.signer || "",
     signerTitle: decree.signerTitle || "",
     kindTitle: DECREE_KINDS[decree.kind as keyof typeof DECREE_KINDS] ?? decree.kind,

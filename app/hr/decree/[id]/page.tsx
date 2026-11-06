@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/app/lib/auth";
 import { AccessError } from "@/app/lib/access-policy";
 import { hokmSheet } from "@/app/lib/hr-hokm";
+import { DECREE_STATUS } from "@/app/lib/hr-types";
 import { rialText } from "@/app/lib/amount-words";
 import PrintButton from "@/app/components/print-button";
 
@@ -37,7 +38,7 @@ export default async function DecreePrintPage({params}: {params: {id: string}}) 
     if (!(error instanceof AccessError)) throw error;
     return <main className="access-denied"><h1>چاپ حکم</h1><p>{error.message}</p><Link href="/hr?view=decrees" className="primary-button">بازگشت به احکام</Link></main>;
   }
-  const {decree, items, totals, words, signature, kindTitle} = sheet;
+  const {decree, items, totals, words, signature, approval, signing, kindTitle} = sheet;
   const employee = decree.employee;
   const profile = employee.hokmProfile;
   const template = decree.template;
@@ -74,6 +75,8 @@ export default async function DecreePrintPage({params}: {params: {id: string}}) 
       <div className="paper-wrap">
         <div className="paper paper-sheet">
           <div className="watermark" aria-hidden><span>{company}</span></div>
+
+          {!signing ? <div className="paper-draft">پیش‌نویس — {DECREE_STATUS[decree.status as keyof typeof DECREE_STATUS] ?? decree.status}؛ این برگه تا امضای رئیس شرکت قابل اجرا نیست.</div> : null}
 
           <header className="paper-head">
             <div className="paper-head-side">
@@ -134,12 +137,30 @@ export default async function DecreePrintPage({params}: {params: {id: string}}) 
           <p className="paper-standing">{template?.footer || "دستگاه اجرایی موظف است ساعت کار هفتگی را بر اساس مقررات جاری تنظیم کند و این حکم پس از امضا و ابلاغ قابل اجراست."}</p>
 
           <footer className="paper-sign">
-            <div className="sign-line">
-              <div className="sign-name">{decree.signer || "—"}</div>
-              <div className="sign-title">{decree.signerTitle || ""}</div>
-              {signature ? <img src={signature} alt={`امضای ${decree.signer}`}/> : <div className="sign-blank"/>}
-              <div className="sign-caption">امضا</div>
-            </div>
+            {approval ? (
+              <div className="sign-line">
+                <div className="sign-name">{approval.name}</div>
+                <div className="sign-title">{approval.title || "رئیس کارگزینی"}</div>
+                <img src={approval.image} alt={`امضای ${approval.name}`}/>
+                <div className="sign-caption">تأیید رئیس کارگزینی — {faDate(approval.signedAt)}</div>
+              </div>
+            ) : null}
+            {signing ? (
+              <div className="sign-line">
+                <div className="sign-name">{signing.name}</div>
+                <div className="sign-title">{signing.title || "رئیس شرکت"}</div>
+                <img src={signing.image} alt={`امضای ${signing.name}`}/>
+                <div className="sign-caption">امضا — {faDate(signing.signedAt)}</div>
+              </div>
+            ) : (
+              // A paper from before the approval chain keeps its typed signer.
+              <div className="sign-line">
+                <div className="sign-name">{decree.signer || "—"}</div>
+                <div className="sign-title">{decree.signerTitle || ""}</div>
+                {signature ? <img src={signature} alt={`امضای ${decree.signer}`}/> : <div className="sign-blank"/>}
+                <div className="sign-caption">امضا</div>
+              </div>
+            )}
             {decree.cosigner ? <div className="sign-line"><div className="sign-name">{decree.cosigner}</div><div className="sign-blank"/><div className="sign-caption">هم‌امضا</div></div> : null}
           </footer>
         </div>

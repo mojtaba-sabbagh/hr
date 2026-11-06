@@ -131,6 +131,26 @@ test("rule: safety violations are supplied by HSE, not guessed here", () => {
   assert.equal(result.summary.risk, 1);
 });
 
+test("rule: two non-minor incidents travel from the HSE rules into the audit", () => {
+  const {safetyFindings} = require("../app/lib/hse-rules.ts");
+  const at = offset => new Date(Date.now() + offset * DAY);
+  const findings = safetyFindings([
+    {employeeId: "F-1", occurredAt: at(-20), outcome: "MEDICAL", kind: "INCIDENT"},
+    {employeeId: "F-1", occurredAt: at(-40), outcome: "MEDICAL", kind: "INCIDENT"},
+    // A near miss is reported, never counted — otherwise nobody reports one.
+    {employeeId: "F-1", occurredAt: at(-5), outcome: "LOST_TIME", kind: "NEAR_MISS"},
+    // Another person's accident says nothing about this file.
+    {employeeId: "F-2", occurredAt: at(-5), outcome: "LOST_TIME", kind: "INCIDENT"},
+  ]);
+  const own = findings.find(finding => finding.employeeId === "F-1");
+  assert.equal(own.severity, "warn");
+  // E-2's single lost-time accident is a risk for E-2, and stays out of F-1's file.
+  assert.equal(findings.find(finding => finding.employeeId === "F-2").severity, "risk");
+  const result = audit.auditFiles([cleanFile()], {today: TODAY, safety: findings});
+  assert.deepEqual(result.findings.map(finding => finding.key), ["safety-violation"]);
+  assert.match(result.findings[0].text, /۲ حادثهٔ غیرجزئی/);
+});
+
 test("the expiry buckets use the prototype's 60 / 45 / 15 windows", () => {
   const at = offset => audit.contractExpiry(new Date(`${day(offset)}T00:00:00.000Z`), TODAY).level;
   assert.equal(at(-1), "expired");

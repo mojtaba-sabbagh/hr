@@ -9,7 +9,7 @@ const {test} = require("node:test");
 const assert = require("node:assert/strict");
 const {amountInWords, rialText} = require("../app/lib/amount-words.ts");
 const hokm = require("../app/lib/hokm-items.ts");
-const {normalizeSignature, pngSize, MAX_SIGNATURE_SIDE, MAX_SIGNATURE_BYTES} = require("../app/lib/signature-image.ts");
+const {normalizeSignature, pngSize, fitSignatureSize, MAX_SIGNATURE_SIDE, MAX_SIGNATURE_BYTES} = require("../app/lib/signature-image.ts");
 
 // A one-pixel PNG: the smallest thing that is still a real PNG.
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -83,4 +83,17 @@ test("a signature is a small PNG, and nothing else", () => {
   Buffer.from(PNG.split(",")[1], "base64").copy(big);
   assert.throws(() => normalizeSignature(`data:image/png;base64,${big.toString("base64")}`), e => e.status === 400);
   assert.equal(MAX_SIGNATURE_SIDE, 1200);
+});
+
+test("the pad exports at an accepted size on a high-density screen", () => {
+  // The canvas backing store is PAD × devicePixelRatio: 900×300 on a 2× screen
+  // used to export 1800×600 and the service rejected the drawing.
+  assert.deepEqual(fitSignatureSize(1800, 600), {width: 1200, height: 400});
+  assert.deepEqual(fitSignatureSize(1350, 450), {width: 1200, height: 400});
+  // Already inside the bounds: nothing is rescaled, and a small scan is never enlarged.
+  assert.deepEqual(fitSignatureSize(900, 300), {width: 900, height: 300});
+  assert.deepEqual(fitSignatureSize(300, 100), {width: 300, height: 100});
+  // Portrait drawings keep their ratio.
+  assert.deepEqual(fitSignatureSize(600, 1500), {width: 480, height: 1200});
+  assert.deepEqual(fitSignatureSize(0, 0), {width: 1, height: 1});
 });

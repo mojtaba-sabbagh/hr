@@ -48,6 +48,7 @@ model User {
   // A signature captured on a minute is snapshotted next to the paper, so a
   // later change of signature cannot rewrite a document that was already signed.
   minuteSignatures    HrMinuteSignature[]
+  decreeSignatures    HrDecreeSignature[]
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 }
@@ -240,6 +241,11 @@ model HrEmployee {
   acknowledgements HrAcknowledgement[]
   features      HrEmployeeFeature[]
   talent        HrTalentReview?
+  // آزمون روزانهٔ ایمنی: برگهٔ هر روز و پاسخ‌های آن.
+  safetyAssignments HrSafetyAssignment[]
+  safetyAnswers HrSafetyAnswer[]
+  // پیوند فرد با حادثه — قاعدهٔ ۱۵ ممیزی و نیاز آموزشی حادثه‌محور از همین می‌خوانند.
+  incidentLinks HseIncidentPerson[]
   @@index([managerId, active])
   @@index([department, active])
   @@index([companyId, active])
@@ -286,6 +292,10 @@ model HrAttendance {
   endNextDay   Boolean @default(false)
   breakMinutes Int @default(0)
   workedMinutes Int @default(0)
+  // اضافه‌کاری ثبت‌شده به دقیقه. صفر یعنی «ثبت نشده»؛ موتور خستگی در این حالت
+  // از (workedMinutes − scheduledMinutes) استفاده می‌کند و روش محاسبه را
+  // روی رویداد می‌نویسد، چون خط ۴۰ ساعت یک ادعای ایمنی کار است.
+  overtimeMinutes Int @default(0)
   note         String @default("")
   recordedBy   String
   updatedAt    DateTime @updatedAt
@@ -303,8 +313,30 @@ model HrShift {
   endNextDay  Boolean @default(false)
   note        String @default("")
   published   Boolean @default(false)
+  // منبع این ردیف. «HR» یعنی ثبت دستی قدیمی؛ «SHIFTWISE» یعنی کشی که از
+  // برنامهٔ منتشرشدهٔ شیفت‌یار نوشته شده است. این نسخهٔ دوم عمداً فقط‌خواندنی
+  // است تا دو برنامهٔ قابل ویرایش، مثل department و managerId، از هم جدا نشوند.
+  source      String @default("HR")
+  syncedAt    DateTime?
   updatedAt   DateTime @updatedAt
   @@unique([employeeId, workDate])
+  @@index([source, workDate])
+}
+
+model HrShiftSync {
+  id              String   @id @default(cuid())
+  kind            String   @default("ROSTER") // ROSTER | FULL
+  status          String   @default("OK") // OK | PARTIAL | FAILED
+  weekStart       DateTime @db.Date
+  pushedWorkers   Int      @default(0)
+  pushedLeaves    Int      @default(0)
+  importedShifts  Int      @default(0)
+  uncovered       Int      @default(0)
+  skipped         Json     @default("[]")
+  message         String   @default("")
+  createdBy       String
+  createdAt       DateTime @default(now())
+  @@index([createdAt])
 }
 
 model HrEvaluation {
@@ -348,6 +380,13 @@ model HrCandidate {
   education       String @default("")
   experienceYears Int @default(0)
   notes           String @default("")
+  // The CV itself: extracted text (never the binary), the uploaded name, and the
+  // last model reading. `cvSummary` is a proposal — nothing in it changes the
+  // candidate's stage or ranking; the recruiter applies fields by hand.
+  cvText          String @default("")
+  cvFileName      String @default("")
+  cvSummary       Json?
+  cvAnalyzedAt    DateTime?
   stage           String @default("APPLIED")
   decisionNote    String?
   decidedBy       String?
@@ -426,10 +465,15 @@ model HrDecree {
   contract    HrContract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
   number      String // e.g. ح-۱۴۰۵-۱۱۰۰, unique inside the company
   kind        String // APPOINTMENT | SALARY_INCREASE | ...
-  status      String @default("ISSUED") // ISSUED | CANCELLED
+  // PENDING_APPROVAL → APPROVED → SIGNED → NOTIFIED, or CANCELLED. The paper is
+  // issued by کارگزینی, approved by its head, and only then signed by the head
+  // of the company; notification is the last step and needs the signature.
+  status      String @default("PENDING_APPROVAL")
   issuedAt    DateTime @default(now())
   effectiveAt DateTime @db.Date
   notifiedAt  DateTime?
+  // Legacy, read-only: decrees issued before the approval chain typed the
+  // signer's name. New papers carry `signatures` instead and print only those.
   signer      String @default("")
   cosigner    String @default("")
   baseSalary  Int    @default(0)
@@ -443,6 +487,7 @@ model HrDecree {
   // Whose signature image the print page shows, if the signer has one.
   signerUserId String?
   items        HrDecreeItem[]
+  signatures   HrDecreeSignature[]
   createdById   String?
   createdByName String @default("")
   createdAt   DateTime @default(now())
@@ -450,6 +495,26 @@ model HrDecree {
   @@unique([companyId, number])
   @@index([companyId, status, issuedAt])
   @@index([employeeId, issuedAt])
+}
+
+/// A signature stage on a حکم. Two rows at most per decree: `APPROVAL` by the
+/// head of کارگزینی, `SIGN` by the head of the company. The image is copied
+/// here when the person signs, so changing one's signature later cannot alter a
+/// paper that already bears the old mark.
+model HrDecreeSignature {
+  id         String   @id @default(cuid())
+  decreeId   String
+  decree     HrDecree @relation(fields: [decreeId], references: [id], onDelete: Cascade)
+  stage      String // APPROVAL | SIGN
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeId String
+  name       String
+  title      String   @default("")
+  image      String   @db.Text
+  signedAt   DateTime @default(now())
+  @@unique([decreeId, stage])
+  @@index([userId, signedAt])
 }
 
 // مدارک پرونده: the ten mandatory documents, one row per person and kind. A row
@@ -815,12 +880,459 @@ model HrShiftPlan {
   scenario   String
   status     String   @default("DRAFT")
   metrics    Json
+  // ضریب‌هایی که بر اساس آن‌ها سنجه‌ها حساب شده است. ذخیره می‌شوند تا وقتی
+  // انبار/نگهداری فعال شود، اثر همان پلن دوباره از صفر استنتاج نشود.
+  factors    Json     @default("{}")
+  // اثرهای قصدشده‌ای که این پلن منتشر می‌کند (نوع، زیرسیستم، پارامترها).
+  effects    Json     @default("[]")
+  // بازهٔ اعمال اثرها؛ برای پلن فوق‌العاده الزامی است تا مرخصی‌ها پیدا شوند.
+  fromDate   DateTime? @db.Date
+  toDate     DateTime? @db.Date
+  // تأیید قرمز پلن فوق‌العاده، جدا از تأییدکننده.
+  confirmedBy String?
+  confirmedAt DateTime?
   approvedBy String?
   approvedAt DateTime?
   createdBy  String
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   @@index([status])
+}
+
+// دفتر رویدادهای هوش مصنوعی — «یک‌بار در هر پنجره هشدار بده».
+// یکتایی روی createdAt خودش چیزی را حذف نمی‌کند؛ خدمت پیش از نوشتن بازه را
+// می‌پرسد و این ایندکس نگهبان دو sweep هم‌زمان است.
+model HrAiEvent {
+  id        String   @id @default(cuid())
+  engine    String
+  dedupeKey String
+  subjectId String?
+  severity  String   @default("warn")
+  payload   Json
+  createdAt DateTime @default(now())
+  @@unique([engine, dedupeKey, createdAt])
+  @@index([engine, subjectId, createdAt])
+}
+
+// نیاز آموزشی تولیدشده توسط موتورها. AI-10 («مدیریت خستگی») و AI-03 هر دو در
+// همین جدول می‌نویسند: کلید یکتا یعنی یک نفر برای یک دوره از یک منبع، یک ردیف.
+// `reasons` همهٔ دلایل با هم است و `score` جمع وزن آن‌ها؛ `weight` فقط برای
+// ردیف‌هایی که پیش از AI-03 نوشته شده‌اند باقی مانده است.
+model HrTrainingNeed {
+  id         String   @id @default(cuid())
+  employeeId String
+  courseId   String?
+  courseRef  HrCourse? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  course     String
+  reason     String
+  reasons    Json     @default("[]")
+  source     String
+  weight     Int      @default(0)
+  score      Int      @default(0)
+  status     String   @default("OPEN")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  @@unique([employeeId, course, source])
+  @@index([status, course])
+  @@index([courseId])
+}
+
+// ── آموزش و توسعه (AI-03) ───────────────────────────────────────────────────
+// دوره، مدرس و کلاس سه چیز جدا هستند: دوره ثابت است، مدرس می‌تواند برای چند
+// دوره بیاید، و کلاس یک اجرای مشخص از یک دوره در یک روز و ساعت است. گواهی‌نامه
+// به دوره گره می‌خورد نه به کلاس، چون اعتبارش با تکرار کلاس تمدید نمی‌شود.
+
+model HrCourse {
+  id             String   @id @default(cuid())
+  title          String   @unique
+  category       String   @default("")
+  description    String   @default("")
+  mandatory      Boolean  @default(false)
+  validityMonths Int      @default(0) // ۰ یعنی بدون انقضا
+  passScore      Int      @default(60)
+  minAttendees   Int      @default(3)
+  active         Boolean  @default(true)
+  createdBy      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  instructors    HrCourseInstructor[]
+  sessions       HrCourseSession[]
+  certificates   HrCertificate[]
+  needs          HrTrainingNeed[]
+  @@index([active, mandatory])
+}
+
+// مدرس می‌تواند کارمند خود سازمان باشد یا نباشد؛ اگر حساب کاربری داشته باشد،
+// جریمهٔ «مدرس بدون حساب» در امتیاز گزینهٔ کلاس صفر می‌شود.
+model HrInstructor {
+  id         String   @id @default(cuid())
+  name       String
+  employeeId String?
+  userId     String?
+  email      String   @default("")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  availability HrInstructorSlot[]
+  courses    HrCourseInstructor[]
+  sessions   HrCourseSession[]
+  @@index([active])
+}
+
+// دسترس‌پذیری واقعی مدرس، نه شبیه‌سازی نمونهٔ اولیه. هر ردیف یعنی «این مدرس در
+// این روز هفته این بازه را دارد»؛ روز ۰ شنبه است تا با هفتهٔ کاری ایران بخواند.
+model HrInstructorSlot {
+  id           String @id @default(cuid())
+  instructorId String
+  instructor   HrInstructor @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  weekday      Int    @default(0)
+  slot         String // A | B | C | D
+  available    Boolean @default(true)
+  @@unique([instructorId, weekday, slot])
+  @@index([instructorId, weekday])
+}
+
+model HrCourseInstructor {
+  id           String @id @default(cuid())
+  courseId     String
+  course       HrCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  instructorId String
+  instructor   HrInstructor @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  @@unique([courseId, instructorId])
+  @@index([instructorId])
+}
+
+// یک اجرای مشخص از یک دوره. DRAFT چیزی است که برنامه‌ریز ساخته و هنوز منتشر
+// نشده؛ PUBLISHED همان چیزی است که به پرسنل نشان داده می‌شود.
+model HrCourseSession {
+  id           String   @id @default(cuid())
+  courseId     String
+  course       HrCourse @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  instructorId String?
+  instructor   HrInstructor? @relation(fields: [instructorId], references: [id], onDelete: SetNull)
+  date         DateTime @db.Date
+  slot         String // A | B | C | D
+  room         String   @default("")
+  status       String   @default("DRAFT") // DRAFT | PUBLISHED | CANCELLED
+  minAttendees Int      @default(3)
+  planHash     String   @default("")
+  createdBy    String
+  publishedBy  String?
+  publishedAt  DateTime?
+  enrollments  HrEnrollment[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@unique([courseId, date, slot])
+  @@index([date, status])
+}
+
+model HrEnrollment {
+  id            String   @id @default(cuid())
+  sessionId     String
+  session       HrCourseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  employeeId    String
+  status        String   @default("INVITED") // INVITED | ATTENDED | ABSENT
+  attended      Boolean  @default(false)
+  score         Int?
+  satisfaction  Int?
+  certificate   HrCertificate?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@unique([sessionId, employeeId])
+  @@index([employeeId])
+}
+
+model HrCertificate {
+  id           String   @id @default(cuid())
+  employeeId   String
+  courseId     String
+  course       HrCourse @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  enrollmentId String?  @unique
+  enrollment   HrEnrollment? @relation(fields: [enrollmentId], references: [id], onDelete: SetNull)
+  serial       String   @unique
+  issuedAt     DateTime @db.Date
+  expiresAt    DateTime? @db.Date
+  createdAt    DateTime @default(now())
+  @@index([employeeId, courseId])
+  @@index([expiresAt])
+}
+
+// ── دستیار هوشمند (AI-05، مرحلهٔ ۱) ─────────────────────────────────────────
+// پیکرهٔ دانش سه تکه دارد و هر تکه عمر خودش را دارد: آیین‌نامه‌ها زنده از
+// HrRegulation خوانده می‌شوند (کپی نمی‌شوند، وگرنه ویرایشِ آیین‌نامه در دستیار
+// دیده نمی‌شد)، کتاب فرایندها یک‌بار از PDF ایندکس و در HrKnowledgeArticle
+// نگه داشته می‌شود، و پاسخ‌های تأییدشدهٔ متداول در HrFaq دست‌چین می‌شوند.
+
+model HrKnowledgeArticle {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+  category  String   @default("")
+  body      String
+  source    String   @default("process-book")
+  page      Int?
+  ord       Int      @default(0)
+  published Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([category, ord])
+  @@index([published])
+}
+
+model HrFaq {
+  id           String   @id @default(cuid())
+  question     String
+  answer       String
+  tags         Json     @default("[]")
+  audienceKeys Json     @default("[]")
+  published    Boolean  @default(false)
+  hits         Int      @default(0)
+  createdBy    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([published])
+}
+
+// سقف اختیار مالی سیاست است، نه نتیجهٔ محاسبه؛ ولی در یک جدول می‌نشیند تا
+// دستیار عدد امروز را بگوید و تغییرش یک ردیف باشد، نه یک انتشار مجدد.
+model HrAuthorityLimit {
+  id          String   @id @default(cuid())
+  roleKey     String   @unique // SUPERVISOR | MANAGER | DEPUTY
+  title       String
+  ceilingRial BigInt
+  note        String   @default("")
+  updatedBy   String
+  updatedAt   DateTime @updatedAt
+}
+
+// هر پرسش ثبت می‌شود، حتی بی‌پاسخ‌ها؛ فهرست پرسش‌های بی‌پاسخ همان چیزی است که
+// به «چه FAQ باید نوشت» تبدیل می‌شود.
+model HrAssistantQuestion {
+  id         String   @id @default(cuid())
+  userId     String
+  employeeId String?
+  question   String
+  intent     String   @default("") // شناسهٔ الگوی زنده، اگر پرسش به یکی بخورد
+  matchKind  String   @default("") // faq | article | regulation | pattern | none
+  matchId    String?
+  score      Int      @default(0)
+  answered   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  @@index([createdAt])
+  @@index([answered, createdAt])
+}
+
+// ── آزمون روزانه ایمنی (AI-11) ──────────────────────────────────────────────
+// بانک سؤال محتواست، نه کد: HSE آن را ویرایش می‌کند و retires می‌کند، و سؤال
+// غیرفعال در انتخاب روزانه دیده نمی‌شود ولی پاسخ‌های گذشته‌اش می‌مانند.
+//
+// `jobTitles` مخاطبِ سؤال را می‌گوید (خالی = همه)، `riskKey` موضوع ریسک است که
+// هم برای تنوع انتخاب و هم برای گزارش «کدام ریسک را نمی‌دانیم» استفاده می‌شود،
+// و `explain` تنها جایی است که پاسخ درست توضیح داده می‌شود — بدون آن، آزمون یک
+// عدد است نه یک آموزش.
+
+model HrSafetyQuestion {
+  id          String          @id @default(cuid())
+  stem        String
+  options     Json            @default("[]")
+  answerIndex Int
+  explain     String          @default("")
+  riskKey     String          @default("")
+  jobTitles   Json            @default("[]")
+  general     Boolean         @default(false)
+  source      String          @default("")
+  active      Boolean         @default(true)
+  createdBy   String          @default("seed")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  answers     HrSafetyAnswer[]
+  @@index([active, general])
+  @@index([riskKey])
+}
+
+// برگهٔ هر روز جدا ذخیره می‌شود. انتخاب سه سؤال قطعی است، ولی اگر بانک وسط روز
+// ویرایش شود برگهٔ امروز نباید عوض شود — وگرنه کسی که دو سؤال را پاسخ داده با
+// سه سؤال تازه روبه‌رو می‌شود و «تمام‌شدن» دیگر معنا ندارد.
+model HrSafetyAssignment {
+  id          String      @id @default(cuid())
+  employeeId  String
+  employee    HrEmployee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  workDate    DateTime    @db.Date
+  questionIds Json        @default("[]")
+  briefingId  String?
+  createdAt   DateTime    @default(now())
+  @@unique([employeeId, workDate])
+  @@index([workDate])
+}
+
+model HrSafetyAnswer {
+  id         String           @id @default(cuid())
+  employeeId String
+  employee   HrEmployee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  questionId String
+  question   HrSafetyQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  workDate   DateTime         @db.Date
+  // ایندکس گزینه، یا ‎-1‎ برای «نمی‌دانم» — که غلط شمرده می‌شود ولی از پاسخ
+  // حدسی جدا می‌ماند، چون یکی ندانستن است و دیگری اشتباه دانستن.
+  choice     Int
+  correct    Boolean
+  answeredAt DateTime         @default(now())
+  @@unique([employeeId, workDate, questionId])
+  @@index([employeeId, workDate])
+  @@index([questionId, workDate])
+}
+
+// پیام کوتاه ابتدای آزمون؛ به‌ترتیب `ord` روزبه‌روز می‌گردد.
+model HrSafetyBriefing {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  ord       Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([active, ord])
+}
+
+// ── لایهٔ مدل زبانی (Stage 2) ───────────────────────────────────────────────
+// Each call is logged, not because every answer needs auditing, but because a
+// disputed answer must be reproducible: the hash proves which prompt produced
+// it, and the stored output shows what the person actually received. The prompt
+// itself is not stored — it carries personal text — only its SHA-256.
+model HrAiCall {
+  id         String   @id @default(cuid())
+  feature    String // assistant | cv | survey | feedback | minute | decree
+  userId     String?
+  inputHash  String
+  provider   String   @default("offline")
+  model      String   @default("")
+  // OK | ERROR | INVALID | RATE | EMPTY
+  status     String   @default("OK")
+  error      String   @default("")
+  outputText String   @default("")
+  tokensIn   Int      @default(0)
+  tokensOut  Int      @default(0)
+  createdAt  DateTime @default(now())
+  @@index([feature, createdAt])
+  @@index([userId, createdAt])
+}
+
+// The last model reading of a text collection — survey answers or «صدای من».
+// Kept as a row rather than recomputed on every page load so two managers see
+// the same analysis and a quote stays traceable to what the model was shown.
+model HrTextInsight {
+  id        String   @id @default(cuid())
+  scope     String // survey | feedback
+  refId     String   @default("")
+  summary   String   @default("")
+  themes    Json     @default("[]")
+  count     Int      @default(0)
+  provider  String   @default("")
+  model     String   @default("")
+  createdBy String   @default("")
+  createdAt DateTime @default(now())
+  @@index([scope, refId, createdAt])
+}
+
+// آستانه‌های قابل تغییر — امروز فقط آستانهٔ ریسک HSE را نگه می‌دارد.
+// عدد ثابت در کد یعنی تغییر سیاست نیاز به استقرار دوباره دارد؛ مدیر HSE باید
+// بتواند آستانه را خودش تنظیم کند و اثرش فوراً در غربالگری دیده شود.
+model HrAiSetting {
+  key       String   @id
+  value     String   @default("")
+  updatedBy String   @default("")
+  updatedAt DateTime @updatedAt
+}
+
+// ── HSE تایپ‌شده (AI-09) ─────────────────────────────────────────────────────
+// تا امروز /hse یک نمونهٔ فرم‌ساز عمومی بود و ریسک در JSON زندگی می‌کرد؛ قاعده‌ای
+// که باید در برابر بازرس دفاع‌پذیر باشد نمی‌تواند به شکل یک فرم وابسته باشد.
+// این سه جدول حداقلِ لازم است: مخاطره با احتمال و شدت، حادثه با پتانسیل و علت
+// ریشه‌ای، و اقدام اصلاحی با مهلت و مالک.
+model HseHazard {
+  id          String    @id @default(cuid())
+  code        String    @default("")
+  title       String
+  area        String    @default("")
+  category    String    @default("GENERAL") // ELECTRICAL | FALL | MECHANICAL | CHEMICAL | ERGONOMIC | FIRE | ENVIRONMENT | GENERAL
+  description String    @default("")
+  probability Int       @default(1) // ۱ تا ۵
+  severity    Int       @default(1) // ۱ تا ۵ — امتیاز = احتمال × شدت
+  score       Int       @default(1)
+  level       String    @default("LOW") // LOW | MEDIUM | HIGH | CRITICAL
+  controls    String    @default("")
+  ownerName   String    @default("")
+  status      String    @default("OPEN") // OPEN | MITIGATING | CONTROLLED | CLOSED
+  reviewAt    DateTime?
+  companyId   String?
+  createdBy   String    @default("")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  capas       HseCapa[]
+  @@index([companyId, status])
+  @@index([level])
+}
+
+model HseIncident {
+  id           String   @id @default(cuid())
+  code         String   @default("")
+  title        String
+  kind         String   @default("INCIDENT") // INCIDENT | NEAR_MISS | UNSAFE_ACT | UNSAFE_CONDITION
+  occurredAt   DateTime
+  area         String   @default("")
+  description  String   @default("")
+  outcome      String   @default("NONE") // NONE | FIRST_AID | MEDICAL | LOST_TIME | FATAL
+  potential    Int      @default(1) // ۱ تا ۵ — امتیاز ریسک = پتانسیل × ۳
+  score        Int      @default(3)
+  level        String   @default("LOW")
+  rootCause    String   @default("OTHER") // SKILL | TRAINING | PROCEDURE | EQUIPMENT | ENVIRONMENT | OTHER
+  actionsTaken String   @default("")
+  status       String   @default("OPEN") // OPEN | INVESTIGATING | ACTIONS | CLOSED
+  reporterId   String   @default("")
+  reporterName String   @default("")
+  companyId    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  people       HseIncidentPerson[]
+  capas        HseCapa[]
+  @@index([companyId, occurredAt])
+  @@index([level])
+}
+
+model HseIncidentPerson {
+  id         String      @id @default(cuid())
+  incidentId String
+  incident   HseIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   HrEmployee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  role       String      @default("INVOLVED") // INVOLVED | WITNESS | SUPERVISOR
+  @@unique([incidentId, employeeId])
+  @@index([employeeId])
+}
+
+model HseCapa {
+  id          String      @id @default(cuid())
+  code        String      @default("")
+  title       String
+  description String      @default("")
+  source      String      @default("MANUAL") // INCIDENT | HAZARD | MANUAL
+  incidentId  String?
+  incident    HseIncident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  hazardId    String?
+  hazard      HseHazard?  @relation(fields: [hazardId], references: [id], onDelete: SetNull)
+  // «در انتظار پیشنهاد» یعنی سامانه ساخته، نه اینکه کسی مسئولیتش را پذیرفته باشد.
+  status      String      @default("AWAITING_PROPOSAL") // AWAITING_PROPOSAL | PROPOSED | IN_PROGRESS | DONE | CLOSED
+  proposal    String      @default("")
+  dueAt       DateTime
+  ownerId     String      @default("")
+  ownerName   String      @default("")
+  closedAt    DateTime?
+  companyId   String?
+  createdBy   String      @default("")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  @@index([companyId, status, dueAt])
+  @@index([incidentId])
 }
 
 // Company workspaces are isolated from the legacy, installation-wide HR records.

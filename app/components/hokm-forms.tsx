@@ -11,7 +11,8 @@
 // Both are deliberately dumb about the network: they collect a body and hand it
 // to `onSubmit`, so the caller keeps one `mutate` path and one error banner.
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X, Plus, Trash2, Sparkles } from "lucide-react";
+import { postAi, type DraftReply } from "./ai-client";
 
 export type Row = Record<string, any>;
 export type ItemRule = {id?: string; key: string; label: string; kind: string; required?: boolean; defaultAmount?: number; note?: string};
@@ -41,11 +42,17 @@ function Shell({title, eyebrow, busy, error, close, children, submitLabel, onSub
  * left at zero is not printed — unless the template marks it required, because
  * some institutions must show a line even when it pays nothing.
  */
-export function HokmDialog({board, signerName, signerUserId, busy, error, close, onSubmit}: {board: Board; signerName: string; signerUserId: string; busy: boolean; error: string; close: () => void; onSubmit: (body: Row) => void}) {
+export function HokmDialog({board, busy, error, close, onSubmit}: {board: Board; busy: boolean; error: string; close: () => void; onSubmit: (body: Row) => void}) {
   const [templateId, setTemplateId] = useState(board.templates[0]?.id ?? "");
   const template = board.templates.find(item => item.id === templateId);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
-  const [withMySignature, setWithMySignature] = useState(true);
+  // کنترل‌شده، چون پیش‌نویس «علت صدور» پیش از ذخیره به همین مقدارها نیاز دارد.
+  const [employeeId, setEmployeeId] = useState("");
+  const [kind, setKind] = useState("APPOINTMENT");
+  const [effectiveAt, setEffectiveAt] = useState(todayISO());
+  const [reason, setReason] = useState("");
+  const [drafting, setDrafting] = useState(false);
+  const [draftNote, setDraftNote] = useState("");
 
   useEffect(() => {
     // Every time the layout changes, the boxes start from its own defaults: an
@@ -58,6 +65,33 @@ export function HokmDialog({board, signerName, signerUserId, busy, error, close,
   const rows = template?.items ?? [];
   const total = rows.reduce((sum, rule) => sum + (rule.kind === "DEDUCTION" ? -1 : 1) * Number(amounts[rule.key] || 0), 0);
 
+  /**
+   * پیش‌نویس شرح حکم از همان چیزی که در فرم است.
+   *
+   * عمداً پیش از ذخیره کار می‌کند: کارگزینی معمولاً هنگام نوشتن حکم به این متن
+   * نیاز دارد، نه بعد از ثبت آن. مبلغ‌ها پیش از خروج از سرور پاک می‌شوند، پس
+   * متن پیش‌نویس هیچ عددی از حقوق را تکرار نمی‌کند.
+   */
+  async function suggest() {
+    setDraftNote("");
+    setDrafting(true);
+    const reply = await postAi<DraftReply>("decree", {
+      context: {
+        employee: board.employees.find(employee => employee.id === employeeId)?.name ?? "",
+        kind: board.kinds[kind] ?? kind,
+        effective: effectiveAt,
+        items: rows.filter(rule => Number(amounts[rule.key] || 0) > 0 || rule.required)
+          .map((rule, index) => ({label: rule.label, letter: String(index + 1), amount: Number(amounts[rule.key] || 0)})),
+        reason,
+      },
+    });
+    setDrafting(false);
+    if (!reply.ok) { setDraftNote(reply.message); return; }
+    if (!reply.data.ok) { setDraftNote(reply.data.message || "پیش‌نویس آماده نشد."); return; }
+    setReason(previous => (previous.trim() ? `${previous.trim()}\n\n${reply.data.draft}` : reply.data.draft));
+    setDraftNote("پیش‌نویس افزوده شد؛ آن را ویرایش کنید.");
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -67,9 +101,6 @@ export function HokmDialog({board, signerName, signerUserId, busy, error, close,
       kind: form.get("kind"),
       effectiveAt: form.get("effectiveAt"),
       number: form.get("number") || undefined,
-      signer: form.get("signer"),
-      signerTitle: form.get("signerTitle"),
-      signerUserId: withMySignature ? signerUserId : undefined,
       reason: form.get("reason"),
       items: rows.filter(rule => Number(amounts[rule.key] || 0) > 0 || rule.required).map(rule => ({key: rule.key, label: rule.label, kind: rule.kind, amount: Number(amounts[rule.key] || 0), note: rule.note ?? ""})),
     });
@@ -83,15 +114,13 @@ export function HokmDialog({board, signerName, signerUserId, busy, error, close,
 
   return <Shell title="صدور حکم کارگزینی" eyebrow="کارگزینی" busy={busy} error={error} close={close} submitLabel="صدور حکم" onSubmit={submit}>
     <div className="form-columns">
-      <label>پرسنل<select name="employeeId" required defaultValue=""><option value="">انتخاب کنید…</option>{board.employees.map(employee => <option key={employee.id} value={employee.id}>{employee.name} — {employee.personnelCode}</option>)}</select></label>
+      <label>پرسنل<select name="employeeId" required value={employeeId} onChange={event => setEmployeeId(event.target.value)}><option value="">انتخاب کنید…</option>{board.employees.map(employee => <option key={employee.id} value={employee.id}>{employee.name} — {employee.personnelCode}</option>)}</select></label>
       <label>قالب حکم<select value={templateId} onChange={event => setTemplateId(event.target.value)}>{board.templates.map(item => <option key={item.id} value={item.id}>{item.name} · {item.title}</option>)}</select></label>
-      <label>نوع حکم<select name="kind" required defaultValue="APPOINTMENT">{Object.entries(board.kinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <label>تاریخ اجرا<input name="effectiveAt" type="date" required defaultValue={todayISO()}/></label>
+      <label>نوع حکم<select name="kind" required value={kind} onChange={event => setKind(event.target.value)}>{Object.entries(board.kinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>تاریخ اجرا<input name="effectiveAt" type="date" required value={effectiveAt} onChange={event => setEffectiveAt(event.target.value)}/></label>
       <label>شمارهٔ حکم (خالی = خودکار)<input name="number" maxLength={60}/></label>
-      <label>امضاکننده<input name="signer" defaultValue={signerName} maxLength={120}/></label>
-      <label>عنوان امضاکننده<input name="signerTitle" placeholder="مثلاً رئیس دانشگاه" maxLength={160}/></label>
-      <label className="checkbox-label"><input type="checkbox" checked={withMySignature} onChange={event => setWithMySignature(event.target.checked)}/>امضای من زیر حکم درج شود</label>
     </div>
+    <p className="form-hint">حکم با وضعیت «در انتظار تأیید» صادر می‌شود: نخست رئیس کارگزینی آن را تأیید می‌کند و سپس رئیس شرکت امضا می‌کند. امضای هر دو نفر از بخش «امضای من» همان شخص برداشته می‌شود، پس در این فرم نام یا امضایی ثبت نمی‌شود.</p>
 
     <section>
       <div className="section-heading"><h2>ردیف‌های حقوق، مزایا و فوق‌العاده‌ها</h2><span>جمع: {fa(total)} ریال</span></div>
@@ -103,7 +132,16 @@ export function HokmDialog({board, signerName, signerUserId, busy, error, close,
         </div>)}
       </div>
     </section>
-    <label>شرح حکم<textarea name="reason" maxLength={2000} rows={3}/></label>
+    <section>
+      <div className="section-heading">
+        <h2>شرح حکم</h2>
+        <button type="button" className="secondary-button" onClick={() => void suggest()} disabled={drafting}>
+          <Sparkles size={16}/>{drafting ? "در حال نوشتن…" : "پیش‌نویس شرح"}
+        </button>
+      </div>
+      <textarea name="reason" aria-label="شرح حکم" maxLength={2000} rows={3} value={reason} onChange={event => setReason(event.target.value)}/>
+      {draftNote && <p className="form-hint">{draftNote}</p>}
+    </section>
   </Shell>;
 }
 

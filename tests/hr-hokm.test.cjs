@@ -94,7 +94,6 @@ test("the catalogue is scoped to the company that owns it", async () => {
 test("a decree copies the catalogue and totals what it pays", async () => {
   const [template] = (await hokm.listTemplates(manage())).rows;
   const decree = await contracts.saveDecree(manage(), {employeeId: alice.profileId, kind: "SALARY_INCREASE", effectiveAt: day(1), templateId: template.id,
-    signer: "دکتر محمد صباغ", signerTitle: "رئیس دانشگاه", signerUserId: alice.userId,
     items: [{key: "base", amount: "1,200,000,000"}, {key: "attract", amount: 3295715}, {key: "insurance", amount: 0}]});
   assert.equal(decree.items.length, 3);
   assert.deepEqual(decree.items.map(item => item.letter), ["الف", "ب", "پ"]);
@@ -105,7 +104,10 @@ test("a decree copies the catalogue and totals what it pays", async () => {
   const sheet = await hokm.hokmSheet(actor(carol.userId, "carol", ["hr:decrees:view"]), decree.id);
   assert.deepEqual(sheet.totals, {earnings: 1203295715, deductions: 0, net: 1203295715});
   assert.match(sheet.words, /^یک میلیارد و دویست و سه میلیون/);
-  assert.equal(sheet.signerName, "دکتر محمد صباغ");
+  // A fresh paper waits for the head of کارگزینی and carries no mark yet.
+  assert.equal(decree.status, "PENDING_APPROVAL");
+  assert.equal(sheet.approval, null);
+  assert.equal(sheet.signing, null);
   assert.equal(sheet.kindTitle, "افزایش حقوق");
 });
 
@@ -138,15 +140,31 @@ test("an issued decree keeps the rows it printed, whatever the catalogue does la
   assert.equal(sheet.words, "یک میلیارد و دویست و سه میلیون و دویست و نود و پنج هزار و هفتصد و پانزده");
 });
 
-test("the signer's image comes from their account at print time", async () => {
-  await signature.saveSignature(actor(alice.userId, "alice"), {image: PNG});
-  const carolActor = actor(carol.userId, "carol", ["hr:decrees:view"]);
-  const [decree] = (await contracts.listDecrees(carolActor)).rows.filter(row => row.employeeId === alice.profileId);
-  const sheet = await hokm.hokmSheet(carolActor, decree.id);
-  assert.equal(sheet.signature, PNG);
-  // A signer who never drew a signature leaves the line blank, not broken.
-  await db.hrDecree.update({where: {id: decree.id}, data: {signerUserId: null}});
-  assert.equal((await hokm.hokmSheet(carolActor, decree.id)).signature, null);
+test("each stage's mark is the signer's own signature, snapshotted onto the paper", async () => {
+  // The clerk issued the paper; the head of کارگزینی approves it and the head
+  // of the company signs it — two different hands, each with a stored mark.
+  const viewer = actor(carol.userId, "carol", ["hr:decrees:view"]);
+  const [decree] = (await contracts.listDecrees(manage())).rows.filter(row => row.employeeId === alice.profileId && row.status === "PENDING_APPROVAL");
+  const approver = actor(alice.userId, "alice", ["hr:decrees:approve"]);
+  await signature.saveSignature(approver, {image: PNG});
+  assert.equal((await contracts.approveDecree(approver, decree.id)).status, "APPROVED");
+  let sheet = await hokm.hokmSheet(viewer, decree.id);
+  assert.equal(sheet.approval.image, PNG);
+  assert.equal(sheet.approval.name, "alice");
+  assert.equal(sheet.signing, null);
+  // The approval line is the mark of the person, not the typed name of a field.
+  assert.equal(sheet.signature, null);
+  const chief = actor(carol.userId, "carol", ["hr:decrees:sign"]);
+  await signature.saveSignature(chief, {image: PNG});
+  assert.equal((await contracts.signDecree(chief, decree.id)).status, "SIGNED");
+  sheet = await hokm.hokmSheet(viewer, decree.id);
+  assert.equal(sheet.signing.image, PNG);
+  assert.equal(sheet.signing.name, "carol");
+  // A snapshot, not a reference: replacing the mark on the account tomorrow
+  // cannot restyle a paper that was already signed.
+  const other = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  await signature.saveSignature(chief, {image: other});
+  assert.equal((await hokm.hokmSheet(viewer, decree.id)).signing.image, PNG);
 });
 
 test("the حکم and its rows are tenant-scoped", async () => {

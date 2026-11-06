@@ -25,6 +25,18 @@ export function pngSize(bytes: Buffer): {width: number; height: number} | null {
 }
 
 /**
+ * The pad draws on a canvas whose backing store follows the device pixel ratio,
+ * so on a 2× screen the export is twice the drawing area and the service would
+ * refuse it for being wider than `MAX_SIGNATURE_SIDE`. Shrink the export to the
+ * largest accepted square instead, keeping the aspect ratio; never enlarge.
+ */
+export function fitSignatureSize(width: number, height: number, max = MAX_SIGNATURE_SIDE): {width: number; height: number} {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {width: 1, height: 1};
+  const scale = Math.min(1, max / width, max / height);
+  return {width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale))};
+}
+
+/**
  * Accepts a `data:image/png;base64,…` URL and returns the canonical string to
  * store, or throws the message the person sees. It re-encodes from the decoded
  * bytes, so `data:image/png;base64,` can never smuggle a different MIME type or

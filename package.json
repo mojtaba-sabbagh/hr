@@ -19,12 +19,23 @@
     "test:org": "node --test tests/org-chart.test.cjs",
     "test:hr-scope": "node --test tests/hr-scope.test.cjs",
     "test:file-audit": "node --test tests/hr-file-audit.test.cjs",
+    "test:hse-rules": "node --test tests/hse-rules.test.cjs",
+    "test:plan-effects": "node --test tests/plan-effects.test.cjs",
+    "test:fatigue": "node --test tests/fatigue.test.cjs",
+    "test:insights": "node --test tests/insights.test.cjs",
+    "test:nav": "node --test tests/hr-navigation.test.cjs",
+    "test:safety": "node --test tests/safety-quiz.test.cjs",
+    "test:shiftwise": "node --test tests/shiftwise-bridge.test.cjs",
     "test:contracts": "node --test tests/hr-contracts.test.cjs",
     "test:hokm-rules": "node --test tests/hr-hokm-rules.test.cjs",
     "test:hokm": "node --test tests/hr-hokm.test.cjs",
     "test:meetings": "node --test tests/hr-meetings.test.cjs",
+    "test:training": "node --test tests/training-rules.test.cjs",
+    "test:assistant": "node --test tests/assistant-search.test.cjs",
+    "test:ai-layer": "node --test tests/ai-layer.test.cjs",
     "generate": "prisma generate",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test:ai": "node --test tests/plan-effects.test.cjs tests/fatigue.test.cjs tests/insights.test.cjs tests/training-rules.test.cjs tests/assistant-search.test.cjs tests/safety-quiz.test.cjs tests/ai-layer.test.cjs"
   },
   "prisma": {
     "seed": "ts-node --project prisma/tsconfig.seed.json prisma/seed.ts"
