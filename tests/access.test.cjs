@@ -385,12 +385,14 @@ test("HR attendance validates overnight hours and isolates personal data", async
 });
 test("HR shifts are hidden until publication and scoped to the team or owner", async () => {
   const shift = {employeeId: workerRecord.id, workDate: "2026-10-13", kind: "MORNING", startTime: "07:00", endTime: "15:00", published: false};
-  await hr.writeHr(hrOperator, "shifts", shift);
+  // ShiftWise owns publication; HR reads the synced row and exposes no manual writer.
+  await denied(() => hr.writeHr(hrOperator, "shifts", shift), 404);
+  const cached = await db.hrShift.create({data: {...shift, workDate: new Date(shift.workDate), source: "SHIFTWISE"}});
   assert.equal((await hr.readHr(hrWorker, "my-shifts")).rows.length, 0);
-  await hr.writeHr(hrOperator, "shifts", {...shift, published: true});
+  await db.hrShift.update({where: {id: cached.id}, data: {published: true}});
   assert.equal((await hr.readHr(hrWorker, "my-shifts")).rows.length, 1);
   assert.equal((await hr.readHr(hrOther, "my-shifts")).rows.length, 0);
-  await denied(() => hr.writeHr(supervisor, "shifts", shift), 403);
+  await denied(() => hr.readHr(supervisor, "shifts"), 403);
 });
 test("performance reviews use seven explicit ratings and require independent publication", async () => {
   const scores = Object.fromEntries(require("../app/lib/hr-types.ts").COMPETENCIES.map(c => [c.key, 4]));
@@ -532,7 +534,7 @@ test("productivity derives risk from the feature bank and manages OKRs and shift
   await denied(() => hr.readHr(hrWorker, "productivity"), 403);
   await denied(() => hr.writeHr(hrWorker, "productivity", {action: "okr", owner: "x", objective: "y", keyResult: "z", period: "p"}), 403);
   const first = await hr.readHr(hrOperator, "productivity");
-  assert.deepEqual(first.scenarios.map(scenario => scenario.key), ["HIGH", "MID", "LOW"]);
+  assert.deepEqual(first.scenarios.map(scenario => scenario.key), ["LOW", "MID", "HIGH", "EXTREME"]);
   const high = first.scenarios.find(scenario => scenario.key === "HIGH");
   assert.equal(high.metrics.output, 122);
   assert.equal(high.metrics.totalFinancialRisk, high.metrics.overtimeCost + high.metrics.errorCost);

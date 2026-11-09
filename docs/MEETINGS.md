@@ -98,12 +98,17 @@ Permissions: `hr:meetings:{view,manage}`, `hr:minutes:{view,manage,sign,self}`. 
 
 ```bash
 npx prisma generate
-npx prisma migrate deploy
-npx tsc --noEmit
 npm run test:meetings
 ```
 
-The sandbox cannot reach PostgreSQL, so the migration and the database suite run on the host.
+The service tests create, migrate and remove a separate PostgreSQL schema using the configured `DATABASE_URL`. The same command runs the HR navigation tests, including the dashboard shortcut permissions.
+
+The browser tests exercise the dashboard, meeting roster, draft resolution, signature request, signed sheet and the read-only roster at phone width. Build the current sources before running them. Install Playwright locally or set `PLAYWRIGHT_MODULE` to its module path. The default browser is Edge on Windows and Playwright Chromium elsewhere. Set `PLAYWRIGHT_CHANNEL` to use another installed channel.
+
+```bash
+npm run build
+npm run test:meetings:browser
+```
 
 ## Known gaps
 

@@ -27,7 +27,7 @@ export type CompanySettings = {parameters: Record<string, number>; timezone: str
 export const COMPANY_PERMISSIONS = {
   "members:manage": "مدیریت کاربران و نقش‌ها", "forms:manage": "طراحی فرم‌ها",
   "workflows:manage": "طراحی و انتشار گردش‌کار", "settings:manage": "تنظیم پارامترهای شرکت",
-  "entries:view": "مشاهده همه درخواست‌های شرکت", "audit:view": "مشاهده گزارش ممیزی",
+  "purchases:authorize": "تأیید خرید بالاتر از سقف مدیر", "entries:view": "مشاهده همه درخواست‌های شرکت", "audit:view": "مشاهده گزارش ممیزی",
   "entries:team": "مشاهده درخواست‌های زیرمجموعه سازمانی",
   "entries:view:core": "مشاهده درخواست‌های پرتال و خدمات مشترک",
   "entries:view:hr": "مشاهده درخواست‌های منابع انسانی",

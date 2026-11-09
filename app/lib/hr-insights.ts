@@ -1,3 +1,4 @@
+import {operationalInsights} from "./operations/insights";
 // AI-07 — the service half of the insights engine.
 //
 // It gathers facts for the personnel the actor can see, hands them to the pure
@@ -69,6 +70,7 @@ export async function insightsFor(actor: SessionUser, options: {limit?: number} 
     fatigue: [],
     trainingNeeds: (trainingNeeds as NeedRow[]).map(need => ({id: need.id, employeeId: need.employeeId, employeeName: names.get(need.employeeId) ?? "—", course: need.course, createdAt: iso(need.createdAt)})),
     incidents: [],
+    operations: await operationalInsights(actor),
   };
 
   // An incident is read only for an actor who can open the HSE register, and

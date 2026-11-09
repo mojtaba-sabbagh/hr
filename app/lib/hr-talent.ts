@@ -1,3 +1,6 @@
+import {listCompanies, serial, companyAccess} from "./company-service";
+import {applyOperationalEffect} from "./operations/plan";
+import {notifyOps} from "./operations/common";
 import { prisma } from "./prisma";
 import { AccessError, bodyObject, textField } from "./access-policy";
 import { FEATURE_CATEGORIES, FEATURE_CATEGORY_BY_ID, featureItems, OKR_STATUS, PLAN_SCENARIOS, PROMOTION_STATUS, type PlanScenarioKey } from "./hr-types";
@@ -108,8 +111,8 @@ function planKey(value: unknown): PlanScenarioKey {
 const optionalDate = (value: unknown, label: string) => (value === undefined || value === null || value === "" ? null : dateField(value, label));
 const isoDay = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
 // Risk and burnout are derived from the individual feature bank (health domains), never hard-coded.
-async function productivityRoster(actor: SessionUser): Promise<Roster[]> {
-  const employees = await prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor)}, select: {...employeeOption, jobTitle: true}});
+async function productivityRoster(actor: SessionUser, companyId?: string | null): Promise<Roster[]> {
+  const employees = await prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor), ...(companyId !== undefined ? {companyId} : {})}, select: {...employeeOption, jobTitle: true}});
   const ids = employees.map(e => e.id);
   const [features, talents] = await Promise.all([
     prisma.hrEmployeeFeature.findMany({where: {employeeId: {in: ids}, category: {in: ["mental", "physical"]}}, select: {employeeId: true, value: true}}),
@@ -144,31 +147,30 @@ function computePlanMetrics(def: (typeof PLAN_SCENARIOS)[keyof typeof PLAN_SCENA
 }
 export async function listProductivity(actor: SessionUser) {
   requireAny(actor, ["hr:productivity:view", "hr:productivity:manage", "hr:productivity:approve"]);
+  const companies = (await listCompanies(actor)).filter(c=>c.active);
+  const enabled = await prisma.subsystem.findMany({where:{enabled:true},select:{key:true}});
   const roster = await productivityRoster(actor);
   const [okrs, plans, employees] = await Promise.all([
     prisma.hrOkr.findMany({orderBy: [{period: "desc"}, {createdAt: "desc"}], take: 200}),
-    prisma.hrShiftPlan.findMany({orderBy: {createdAt: "desc"}, take: 50}),
+    prisma.hrShiftPlan.findMany({where:actor.role==="SUPER_ADMIN"?{}:{OR:[{companyId:{in:companies.map(c=>c.id)}},{companyId:null}]},orderBy: {createdAt: "desc"}, take: 50}),
     prisma.hrEmployee.findMany({where: {active: true, ...await tenantWhere(actor)}, select: employeeOption, orderBy: {name: "asc"}}),
   ]);
   return {
-    rows: plans,
+    rows: plans, companies,
     employees,
     okrs,
     kpis: {headcount: roster.length, avgPerformance: roster.length ? Math.round(roster.reduce((sum, e) => sum + e.perf, 0) / roster.length) : 0, topShare: roster.length ? Math.round(roster.filter(e => e.perf >= 80).length / roster.length * 100) : 0, highRisk: roster.filter(e => e.risk === "high").length},
-    scenarios: Object.values(PLAN_SCENARIOS).map(def => ({key: def.key, title: def.title, desc: def.desc, requiresConfirmation: def.requiresConfirmation, leaveEffect: def.leaveEffect, factors: planFactors(def), effects: planEffects(def, roster, {}), metrics: computePlanMetrics(def, roster)})),
+    scenarios: Object.values(PLAN_SCENARIOS).map(def => ({key: def.key, title: def.title, desc: def.desc, requiresConfirmation: def.requiresConfirmation, leaveEffect: def.leaveEffect, factors: planFactors(def), effects: planEffects(def, roster, {}, companies.length ? enabled.map(s=>s.key) : []), metrics: computePlanMetrics(def, roster)})),
   };
 }
-/**
- * The effects that exist in this codebase today, carried out once.
- *
- * `planEffects` declares all six; three of them need subsystems that are not
- * built (warehouse, maintenance, procurement) and one needs finance. Those are
- * stored on the plan and nothing else happens, which is the honest outcome: the
- * parameters are already correct the day the subsystem arrives.
- */
-async function applyPlanEffects(db: HrDb, actor: SessionUser, plan: {id: string; period: string; fromDate: Date | null; toDate: Date | null}, effects: PlanEffect[]) {
+async function applyPlanEffects(db: HrDb, actor: SessionUser, plan: {id: string; period: string; companyId: string|null; fromDate: Date | null; toDate: Date | null}, effects: PlanEffect[]) {
   const applied: {key: string; count: number; note: string}[] = [];
   for (const effect of activeEffects(effects)) {
+    if (plan.companyId && effect.runtime === "apply" && effect.subsystem !== "hr") {
+      const result = await applyOperationalEffect(db,plan.companyId,plan,effect);
+      if (result) applied.push(result);
+      continue;
+    }
     if (effect.key === "overtime-budget") {
       const logged = await logAiEvent(db, {
         engine: "plan",
@@ -179,7 +181,10 @@ async function applyPlanEffects(db: HrDb, actor: SessionUser, plan: {id: string;
       if (!logged.created) continue;
       const perPerson = Number(effect.params.perPersonMinutes);
       const total = Number(effect.params.totalMinutes);
-      await notifyPermission(db, ["hr:productivity:approve"], "درخواست بودجهٔ اضافه‌کاری پلن", `پلن «${plan.period}» برای هر نفر ${perPerson.toLocaleString("fa-IR")} دقیقه و در مجموع ${total.toLocaleString("fa-IR")} دقیقه اضافه‌کاری درخواست می‌کند. زیرسیستم مالی فعلاً غیرفعال است؛ این رویداد جای درخواست خرید را می‌گیرد.`, "productivity");
+      const title = "درخواست بودجهٔ اضافه‌کاری پلن";
+      const message = `پلن «${plan.period}» برای هر نفر ${perPerson.toLocaleString("fa-IR")} دقیقه و در مجموع ${total.toLocaleString("fa-IR")} دقیقه اضافه‌کاری درخواست می‌کند. درخواست مالی برای این پلن ثبت نشده است.`;
+      if (plan.companyId) await notifyOps(db,plan.companyId,"hr:productivity:approve",title,message);
+      else await notifyPermission(db,["hr:productivity:approve"],title,message,"productivity");
       applied.push({key: effect.key, count: 1, note: "رویداد بودجه برای تأییدکنندگان ثبت شد"});
       continue;
     }
@@ -189,7 +194,7 @@ async function applyPlanEffects(db: HrDb, actor: SessionUser, plan: {id: string;
         continue;
       }
       const leaves = await db.hrRequest.findMany({
-        where: {kind: "LEAVE", status: "APPROVED", startDate: {lte: plan.toDate}, endDate: {gte: plan.fromDate}},
+        where: {employee:{companyId:plan.companyId},kind: "LEAVE", status: "APPROVED", startDate: {lte: plan.toDate}, endDate: {gte: plan.fromDate}},
         select: {id: true, number: true, employeeId: true, startDate: true, endDate: true, employee: {select: {name: true, manager: {select: {userId: true}}}}},
       });
       let count = 0;
@@ -233,22 +238,28 @@ export async function saveProductivity(actor: SessionUser, input: unknown, id?: 
     // The extreme plan's one implementable effect is the leave hold; without
     // bounds there is nothing to find, so approval refuses rather than pretending.
     if (approve && def.leaveEffect && (!fromDate || !toDate)) throw new AccessError(400, "برای اعمال اثر مرخصی، بازهٔ پلن (از تاریخ / تا تاریخ) الزامی است");
-    const roster = await productivityRoster(actor);
+    const companies = (await listCompanies(actor)).filter(c=>c.active);
+    const companyId = body.companyId ? textField(body.companyId,"شرکت") : companies.length===1 ? companies[0].id : null;
+    if (companyId && !companies.some(c=>c.id===companyId)) throw new AccessError(403,"دسترسی به این شرکت ندارید");
+    if (!companyId && companies.length) throw new AccessError(400,"شرکت پلن را انتخاب کنید");
+    const roster = await productivityRoster(actor,companyId);
     const metrics = computePlanMetrics(def, roster);
     const factors = planFactors(def);
-    const effects = planEffects(def, roster, {from: isoDay(fromDate), to: isoDay(toDate)});
     const status = approve ? "APPROVED" : "DRAFT";
-    return prisma.$transaction(async tx => {
-      const plan = await tx.hrShiftPlan.upsert({
-        where: {period},
-        create: {period, scenario: key, status, metrics, factors, effects, fromDate, toDate,
-          confirmedBy: def.requiresConfirmation ? actor.id : null, confirmedAt: def.requiresConfirmation ? new Date() : null,
-          approvedBy: approve ? actor.id : null, approvedAt: approve ? new Date() : null, createdBy: actor.id},
-        update: {scenario: key, status, metrics, factors, effects, fromDate, toDate,
-          ...(def.requiresConfirmation ? {confirmedBy: actor.id, confirmedAt: new Date()} : {}),
-          ...(approve ? {approvedBy: actor.id, approvedAt: new Date()} : {})},
-      });
-      const applied = approve ? await applyPlanEffects(tx, actor, {id: plan.id, period: plan.period, fromDate, toDate}, effects) : [];
+    return serial(async tx => {
+      if (companyId) await companyAccess(actor,companyId,undefined,tx);
+      const enabled = companyId ? await tx.subsystem.findMany({where:{enabled:true},select:{key:true}}) : [];
+      const effects = planEffects(def,roster,{from:isoDay(fromDate),to:isoDay(toDate)},enabled.map(s=>s.key));
+      const previous = await tx.hrShiftPlan.findFirst({where:{period,companyId}});
+      if (previous?.status === "APPROVED") {
+        if (approve && previous.scenario === key && isoDay(previous.fromDate) === isoDay(fromDate) && isoDay(previous.toDate) === isoDay(toDate)) return {...previous,applied:[]};
+        throw new AccessError(409,"پلن این دوره تأیید شده است؛ برای تغییر، دورهٔ جدید تعریف کنید");
+      }
+      const data = {period,companyId,scenario:key,status,metrics,factors,effects,fromDate,toDate,
+        confirmedBy:def.requiresConfirmation ? actor.id : null, confirmedAt:def.requiresConfirmation ? new Date() : null,
+        approvedBy:approve ? actor.id : null, approvedAt:approve ? new Date() : null};
+      const plan = previous ? await tx.hrShiftPlan.update({where:{id:previous.id},data}) : await tx.hrShiftPlan.create({data:{...data,createdBy:actor.id}});
+      const applied = approve ? await applyPlanEffects(tx,actor,plan,effects) : [];
       return {...plan, applied};
     });
   }

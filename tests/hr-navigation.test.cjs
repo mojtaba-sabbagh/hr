@@ -50,6 +50,21 @@ test("hrHref keeps the existing deep links", () => {
   assert.equal(nav.hrHref("decrees"), "/hr?view=decrees");
 });
 
+test("the meetings dashboard shortcut opens the first organizational view the account can read", () => {
+  const cases = [
+    [["hr:meetings:view"], "/hr?view=meetings"],
+    [["hr:meetings:manage"], "/hr?view=meetings"],
+    [["hr:minutes:manage"], "/hr?view=meetings"],
+    [["hr:minutes:view"], "/hr?view=minutes"],
+    [["hr:minutes:view", "hr:meetings:view"], "/hr?view=meetings"],
+    [["hr:minutes:self", "hr:minutes:sign"], null],
+    [[], null],
+  ];
+  for (const [permissions, expected] of cases) {
+    assert.equal(nav.meetingWorkspaceHref(key => permissions.includes(key)), expected, permissions.join(", "));
+  }
+});
+
 test("search folds the Persian letter variants a keyboard picks differently", () => {
   const views = [{id: "people", title: "پرسنل و پروفایل جامع", subtitle: "پرونده پرسنلی"}];
   assert.equal(nav.searchViews(views, "پرسنل").length, 1);

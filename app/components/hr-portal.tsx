@@ -7,10 +7,10 @@ import AppShell, { type NavSection, type NavItem } from "./app-shell";
 import AssistantPanel from "./assistant-panel";
 import SafetyGate from "./safety-quiz";
 import CommandPalette, { type PaletteView } from "./command-palette";
-import { groupViews, hrHref, shortTitle, type HrGroupId } from "@/app/lib/hr-navigation";
+import { groupViews, hrHref, MEETING_VIEW_KEYS, shortTitle, type HrGroupId } from "@/app/lib/hr-navigation";
 import type { HrQueueItem } from "@/app/lib/hr-queue";
 import { HokmDialog, TemplateDialog, type Board } from "./hokm-forms";
-import { MeetingDialog, MinuteDialog, type MeetingListItem } from "./meeting-forms";
+import { MeetingDialog, MinuteDialog, type MeetingListItem, type MeetingSeat } from "./meeting-forms";
 import CvDialog from "./cv-dialog";
 import { FeedbackInsightPanel, SurveyInsightButton } from "./insight-panel";
 import { hasPermission } from "@/app/lib/access-policy";
@@ -53,9 +53,9 @@ function Badge({tone = "gray", children}: {tone?: string; children: ReactNode}) 
 function Empty({title, children, icon: Icon = Inbox}: {title: string; children?: ReactNode; icon?: LucideIcon}) {
   return <div className="empty-state"><span><Icon size={29}/></span><strong>{title}</strong>{children && <p>{children}</p>}</div>;
 }
-function Table({head, rows, empty}: {head: string[]; rows: ReactNode[][]; empty: string}) {
+function Table({head, rows, empty, className = ""}: {head: string[]; rows: ReactNode[][]; empty: string; className?: string}) {
   if (!rows.length) return <div className="panel"><Empty title={empty}/></div>;
-  return <div className="panel table-scroll hr-table"><table className="core-table"><thead><tr>{head.map((title, index) => <th key={index}>{title}</th>)}</tr></thead><tbody>{rows.map((cells, index) => <tr key={index}>{cells.map((cell, position) => <td key={position}>{cell}</td>)}</tr>)}</tbody></table></div>;
+  return <div className={`panel table-scroll hr-table ${className}`}><table className="core-table"><thead><tr>{head.map((title, index) => <th key={index}>{title}</th>)}</tr></thead><tbody>{rows.map((cells, index) => <tr key={index}>{cells.map((cell, position) => <td key={position}>{cell}</td>)}</tr>)}</tbody></table></div>;
 }
 function Dialog({heading, title, close, children, busy}: {heading: string; title: string; close: () => void; children: ReactNode; busy: boolean}) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -91,8 +91,8 @@ const views: ViewDef[] = [
   {id: "decrees", resource: "decrees", title: "احکام کارگزینی", subtitle: "صدور، تأیید، امضا، چاپ و ابلاغ حکم‌ها", icon: Stamp, keys: ["hr:decrees:view", "hr:decrees:manage", "hr:decrees:approve", "hr:decrees:sign", "hr:decrees:notify"], eyebrow: "کارگزینی"},
   {id: "decree-templates", resource: "decree-templates", title: "قالب‌های حکم", subtitle: "سرصفحه و ردیف‌های پرداخت هر سازمان، یک‌بار تعریف و بارها استفاده", icon: FileSignature, keys: ["hr:decree-templates:manage", "hr:decrees:manage"], eyebrow: "کارگزینی"},
   {id: "hokm-profiles", resource: "hokm-profiles", title: "مشخصات حکم", subtitle: "نام پدر، شناسنامه، مدرک، پست سازمانی و سوابقی که روی حکم چاپ می‌شود", icon: UserRound, keys: ["hr:decrees:view", "hr:decrees:manage"], eyebrow: "کارگزینی"},
-  {id: "meetings", resource: "meetings", title: "جلسات", subtitle: "شوراها و کمیته‌ها و کرسی‌های هر جلسه", icon: Users, keys: ["hr:meetings:view", "hr:meetings:manage", "hr:minutes:manage"], eyebrow: "جلسات و مصوبات"},
-  {id: "minutes", resource: "minutes", title: "صورت‌جلسه‌ها", subtitle: "نوشتن صورت‌جلسه، ثبت مصوبات و گردآوری امضای حاضران", icon: FileText, keys: ["hr:minutes:view", "hr:minutes:manage"], eyebrow: "جلسات و مصوبات"},
+  {id: "meetings", resource: "meetings", title: "جلسات", subtitle: "شوراها و کمیته‌ها و کرسی‌های هر جلسه", icon: Users, keys: MEETING_VIEW_KEYS.meetings, eyebrow: "جلسات و مصوبات"},
+  {id: "minutes", resource: "minutes", title: "صورت‌جلسه‌ها", subtitle: "نوشتن صورت‌جلسه، ثبت مصوبات و گردآوری امضای حاضران", icon: FileText, keys: MEETING_VIEW_KEYS.minutes, eyebrow: "جلسات و مصوبات"},
   {id: "my-minutes", resource: "my-minutes", title: "صورت‌جلسه‌های من", subtitle: "صورت‌جلسه‌هایی که باید امضا کنید یا در آن‌ها حاضر بوده‌اید", icon: PenLine, keys: ["hr:minutes:self", "hr:minutes:sign", "hr:minutes:view"], eyebrow: "من"},
   {id: "documents", resource: "documents", title: "مدارک پرونده", subtitle: "چک‌لیست ده مدرک الزامی هر پرونده", icon: FolderOpen, keys: ["hr:documents:view", "hr:documents:manage"], eyebrow: "کارگزینی"},
   {id: "file-audit", resource: "file-audit", title: "ممیزی پرونده", subtitle: "پانزده قاعدهٔ بدبینانه روی چیزهایی که در پرونده ثبت شده است", icon: ShieldAlert, keys: ["hr:file-audit:view"], eyebrow: "کارگزینی"},
@@ -294,7 +294,7 @@ const employeeName = (rows: Row[] | undefined, id: unknown) => rows?.find(row =>
 // in app/lib/hr-navigation.ts, which stays free of React for the unit tests.
 const GROUP_ICONS: Record<HrGroupId, LucideIcon> = {home: House, me: UserRound, team: Users, file: Stamp, meet: FileText, ops: Clock3, talent: UserPlus, insight: BarChart3};
 
-export default function HrPortal({session, requestedView}: {session: SessionUser; requestedView: string}) {
+export default function HrPortal({session, requestedView, meetingId}: {session: SessionUser; requestedView: string; meetingId: string}) {
   const can = useCallback((key: string) => hasPermission(session, key), [session]);
   const permitted = views.filter(view => !view.keys.length || view.keys.some(can));
   const view = permitted.find(item => item.id === requestedView);
@@ -315,6 +315,7 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
   const [template, setTemplate] = useState<Row | null | undefined>(undefined);
   // undefined = closed, null = new, Row = editing an existing one.
   const [meeting, setMeeting] = useState<Row | null | undefined>(undefined);
+  const [memberList, setMemberList] = useState<Row | null>(null);
   const [minute, setMinute] = useState<Row | null | undefined>(undefined);
   // رزومه: its own dialog because it carries a file and a proposal, not fields.
   const [cvRow, setCvRow] = useState<Row | null>(null);
@@ -332,12 +333,13 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     if (!view) return;
     setLoading(true); setError("");
     try {
-      const result = await api<AnyData>(`/api/hr/${view.resource}`, "GET", undefined, signal);
+      const query = meetingId ? `?meetingId=${encodeURIComponent(meetingId)}` : "";
+      const result = await api<AnyData>(`/api/hr/${view.resource}${query}`, "GET", undefined, signal);
       if (signal?.aborted) return;
       setData(result);
     } catch (error) {if (!signal?.aborted) {setError(error instanceof Error ? error.message : "دریافت اطلاعات انجام نشد"); setData(null);}}
     finally {if (!signal?.aborted) setLoading(false);}
-  }, [view]);
+  }, [view, meetingId]);
   // The queue is a shortcut, not the page: a failure here must not turn a
   // working screen into an error state, so it is swallowed on purpose.
   const loadQueue = useCallback(async (signal?: AbortSignal) => {
@@ -422,7 +424,10 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
         <div className="flex flex-wrap gap-2">{can("hr:decree-templates:manage") ? <button className="secondary-button" disabled={busy} onClick={() => {setModalError(""); setTemplate(row);}}>ویرایش قالب</button> : "—"}</div>]));
     } else if (viewId === "meetings") {
       head.push("جلسه", "دوره", "دبیر", "اعضا", "صورت‌جلسه‌ها", "وضعیت", "عملیات");
-      filtered.forEach(row => push([<span className="request-title">{str(row.name)}</span>, str(row.period) || "—", str(row.secretary) || "—",
+      filtered.forEach(row => push([MEETING_VIEW_KEYS.minutes.some(can)
+        ? <Link className="meeting-name" href={`${hrHref("minutes")}&meetingId=${encodeURIComponent(row.id)}`}>{str(row.name)}</Link>
+        : <button type="button" className="meeting-name" onClick={() => setMemberList(row)}>{str(row.name)}</button>,
+        str(row.period) || "—", str(row.secretary) || "—",
         fa(nz(row.memberCount)), fa(nz(row.minuteCount)),
         row.active ? <Badge tone="green">فعال</Badge> : <Badge tone="gray">غیرفعال</Badge>,
         <div className="flex flex-wrap gap-2">{can("hr:meetings:manage") ? <button className="secondary-button" disabled={busy} onClick={() => {setModalError(""); setMeeting(row);}}>ویرایش جلسه</button> : "—"}</div>]));
@@ -432,14 +437,19 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
         const signs = row.signatures || [];
         const done = nz(row.signedCount);
         const quorum = nz(row.signatureQuorum);
+        const canEdit = row.status === "DRAFT" && can("hr:minutes:manage");
+        const openDraft = () => {setModalError(""); setMinute(row);};
         push([<span className="request-title">{str(row.number)}</span>,
-          <>{row.meeting?.name || "—"}<span className="table-meta">{row.meeting?.period || ""}</span></>,
+          <>{canEdit
+            ? <button type="button" className="meeting-name" disabled={busy} onClick={openDraft}>{row.meeting?.name}</button>
+            : <Link className="meeting-name" href={`/hr/minute/${row.id}`}>{row.meeting?.name}</Link>}
+            <span className="table-meta">{row.meeting?.period || ""}</span></>,
           fshort(row.date),
           <>{fa(nz(row.presentCount))} از {fa(nz(row.attendeeCount))}<span className="table-meta">{row.overdue ? "مصوبهٔ سررسیدگذشته دارد" : ""}</span></>,
           <>{fa(done)} از {fa(quorum)}<span className="table-meta">{signs.length ? signs.map((item: Row) => str(item.signerName)).join("، ") : "هنوز امضایی ثبت نشده"}</span></>,
           <>{badge(row.status, MINUTE_STATUS)}{row.awaitingMe ? <span className="table-meta">در انتظار امضای شما</span> : null}</>,
           <div className="flex flex-wrap gap-2"><a className="secondary-button" href={`/hr/minute/${row.id}`} target="_blank" rel="noreferrer">چاپ</a>
-            {row.status === "DRAFT" && can("hr:minutes:manage") ? <button className="secondary-button" disabled={busy} onClick={() => {setModalError(""); setMinute(row);}}>ویرایش</button> : null}
+            {canEdit ? <button className="secondary-button" disabled={busy} onClick={openDraft}>ویرایش</button> : null}
             {actionButtons("minutes", row)}</div>]);
       });
     } else if (viewId === "hokm-profiles") {
@@ -508,7 +518,7 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     } else {
       return null;
     }
-    return <Table head={head} rows={body} empty="موردی برای نمایش وجود ندارد"/>;
+    return <Table head={head} rows={body} className={["meetings", "minutes", "my-minutes"].includes(viewId) ? "meeting-table" : ""} empty={meetingId && !search ? "هنوز صورت‌جلسه‌ای برای این جلسه ثبت نشده است" : "موردی برای نمایش وجود ندارد"}/>;
   }
 
   function renderDashboard(): ReactNode {
@@ -534,7 +544,7 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
         {later.length > 0 && <><div className="queue-label"><span className="bar"/>در انتظار بررسی<span className="n">{fa(later.length)} مورد</span></div>{later.map(queueRow)}</>}
       </section> : <section className="welcome-card"><div><span className="eyebrow">به فضای کاری منابع انسانی خوش آمدید</span><h2>{session.name}، روزتان بخیر</h2><p>پرونده پرسنلی، درخواست‌ها، ارزیابی و خدمات منابع انسانی<br className="desktop-break"/> در یک فضای یکپارچه در دسترس شماست.</p><div className="flex flex-wrap gap-3">{can("hr:requests:self") && <Link href="/hr?view=requests" className="primary-button"><Plus size={17}/>ثبت درخواست پرسنلی</Link>}{can("hr:voice:self") && <Link href="/hr?view=voice" className="secondary-button">ارسال پیام <MessageSquare size={16}/></Link>}</div></div><div className="welcome-art" aria-hidden="true"><div className="art-orbit"/><div className="art-leaf"><Users size={67} strokeWidth={1}/></div><div className="art-badge"><CheckCircle2 size={19}/>یک تیم، یک مسیر</div></div></section>}
       {!!stats.length && <div className="stat-grid">{stats.map(stat => <Link className="stat-card" key={stat.label} href={`/hr?view=${stat.view}`}><div><span>{stat.label}</span><strong>{fa(stat.value)}</strong><small>مشاهده جزئیات <ArrowUpLeft size={13}/></small></div><span className="stat-icon green"><BarChart3 size={22}/></span></Link>)}</div>}
-      {!!insights.length && <section className="panel"><div className="section-heading"><h2>بینش‌های هوشمند</h2><Link className="text-button" href="/hr?view=insights">همهٔ بینش‌ها <ArrowUpLeft size={14}/></Link></div>{insights.map(row => <article key={str(row.key)} className="notice-row"><span className="feature-icon"><ShieldAlert size={20}/></span><div><h3>{str(row.title)} <Badge tone={str(row.severity) === "risk" ? "red" : str(row.severity) === "warn" ? "amber" : "blue"}>{str(row.employeeName) || "سازمان"}</Badge></h3><p>{str(row.text)}</p><Link className="text-button" href={`/hr?view=${str(row.view)}`}>{str(row.actionLabel)} <ArrowUpLeft size={13}/></Link></div></article>)}</section>}
+      {!!insights.length && <section className="panel"><div className="section-heading"><h2>بینش‌های هوشمند</h2><Link className="text-button" href="/hr?view=insights">همهٔ بینش‌ها <ArrowUpLeft size={14}/></Link></div>{insights.map(row => <article key={str(row.key)} className="notice-row"><span className="feature-icon"><ShieldAlert size={20}/></span><div><h3>{str(row.title)} <Badge tone={str(row.severity) === "risk" ? "red" : str(row.severity) === "warn" ? "amber" : "blue"}>{str(row.employeeName) || "سازمان"}</Badge></h3><p>{str(row.text)}</p><Link className="text-button" href={hrHref(str(row.view))}>{str(row.actionLabel)} <ArrowUpLeft size={13}/></Link></div></article>)}</section>}
       <section className="quick-section"><div className="section-heading"><h2>دسترسی سریع</h2><span>خدمات در دسترس شما</span></div><div className="quick-grid">{permitted.filter(item => item.id !== "dashboard" && item.id !== "inbox").slice(0, 9).map(item => <Link key={item.id} className="quick-link" href={`/hr?view=${item.id}`}><item.icon size={22}/><strong>{item.title}</strong><ArrowUpLeft size={16}/></Link>)}</div></section>
       <section className="panel"><div className="section-heading"><h2>آخرین اعلان‌های منابع انسانی</h2><Link className="text-button" href="/hr?view=inbox">کارتابل من <ArrowUpLeft size={14}/></Link></div>{notifications.length ? notifications.map(notice => <article key={str(notice.id)} className={`notice-row ${notice.readAt ? "" : "unread"}`}><span className="feature-icon"><Bell size={20}/></span><div><h3>{str(notice.title)}</h3><p>{str(notice.body)}</p><span className="table-meta">{fdate(notice.createdAt)}</span></div></article>) : <Empty title="اعلانی برای نمایش وجود ندارد">پاسخ درخواست‌ها و اطلاع‌رسانی‌های منابع انسانی اینجا قرار می‌گیرد.</Empty>}</section>
     </>;
@@ -613,7 +623,7 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     const cards: [string, number][] = [["ریسک", nz(summary.risk)], ["هشدار", nz(summary.warn)], ["اطلاع", nz(summary.notice)], ["افراد درگیر", nz(summary.people)]];
     return <div className="space-y-6">
       <div className="stat-grid">{cards.map(([label, value]) => <div className="stat-card" key={label}><div><span>{label}</span><strong>{fa(value)}</strong></div><span className={`stat-icon ${label === "ریسک" ? "red" : "green"}`}><ShieldAlert size={22}/></span></div>)}</div>
-      <Table head={["شدت", "قاعده", "پرونده", "شرح", "اقدام"]} rows={rows.map(row => [badge(row.severity, {risk: "ریسک", warn: "هشدار", notice: "اطلاع"}), str(row.ruleTitle), str(row.employeeName) || "سازمان", <span className="preserve-text">{str(row.text)}</span>, <Link className="text-button" href={`/hr?view=${str(row.view)}`}>{str(row.actionLabel)} <ArrowUpLeft size={13}/></Link>])} empty="امروز چیزی برای هشدار نیست"/>
+      <Table head={["شدت", "قاعده", "پرونده", "شرح", "اقدام"]} rows={rows.map(row => [badge(row.severity, {risk: "ریسک", warn: "هشدار", notice: "اطلاع"}), str(row.ruleTitle), str(row.employeeName) || "سازمان", <span className="preserve-text">{str(row.text)}</span>, <Link className="text-button" href={hrHref(str(row.view))}>{str(row.actionLabel)} <ArrowUpLeft size={13}/></Link>])} empty="امروز چیزی برای هشدار نیست"/>
       {!!dormant.length && <section className="panel"><div className="section-heading"><h2>قاعده‌های اعلام‌شده و غیرفعال</h2><span>به فعال شدن زیرسیستم وابسته‌اند</span></div><div className="dialog-body"><ul className="table-meta">{dormant.map(rule => <li key={str(rule.key)}>{str(rule.title)} — {str(rule.description)} <Badge tone="gray">{str(rule.requires)}</Badge></li>)}</ul></div></section>}
       <section className="panel"><div className="dialog-body"><p className="table-meta">این فهرست ذخیره نمی‌شود: هر بار از روی قراردادها، احکام، درخواست‌ها، مدارک و کارکرد دوباره محاسبه می‌شود. یک بینش، نتیجه‌گیری است نه رکورد، پس نمی‌تواند کهنه شود.</p></div></section>
     </div>;
@@ -1022,7 +1032,7 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     const kpiCards: [string, number][] = [["نیروی فعال", nz(kpis.headcount)], ["میانگین عملکرد", nz(kpis.avgPerformance)], ["سهم نیروهای پربازده", nz(kpis.topShare)], ["ریسک بالا", nz(kpis.highRisk)]];
     return <div className="space-y-6">
       <div className="stat-grid">{kpiCards.map(([label, value]) => <div className="stat-card" key={label}><div><span>{label}</span><strong>{fa(value)}</strong></div><span className="stat-icon green"><Target size={22}/></span></div>)}</div>
-      <section className="panel"><div className="section-heading"><h2>سناریوهای چیدمان شیفت</h2><span>سنجش بازده در برابر ریسک فرسودگی</span></div><div className="dialog-body"><div className="idea-grid">{scenarios.map(scenario => {const tone = scenario.key === "EXTREME" ? "red" : scenario.key === "HIGH" ? "amber" : scenario.key === "MID" ? "blue" : "green"; const fields: Field[] = [{name: "period", label: "دوره برنامه‌ریزی", type: "text", required: true}, {name: "from", label: "شروع بازهٔ پلن", type: "date"}, {name: "to", label: "پایان بازهٔ پلن", type: "date"}, ...(scenario.requiresConfirmation ? [{name: "confirm", label: "تأیید قرمز: می‌دانم مرخصی‌های تأییدشده معلق می‌شود و اضافه‌کاری به چند برابر می‌رسد", type: "checkbox" as const}] : [])]; const toBody = (action: string) => (values: Record<string, unknown>) => ({action, scenario: scenario.key, period: values.period, from: values.from || undefined, to: values.to || undefined, confirm: values.confirm === true}); return <article className="panel idea-card" key={scenario.key}><div className="flex items-center justify-between"><span className="feature-icon"><Target size={23}/></span><Badge tone={tone}>{scenario.title}</Badge></div><p>{scenario.desc}</p><ul className="table-meta">{[["بازده", `${fa(nz(scenario.metrics.output))}٪`], ["هزینه اضافه‌کاری", fa(nz(scenario.metrics.overtimeCost))], ["ریسک خطا", fa(nz(scenario.metrics.errorCost))], ["ریسک فرسودگی", `${fa(nz(scenario.metrics.burnoutRisk))}٪`], ["ریسک ترک خدمت", `${fa(nz(scenario.metrics.turnoverRisk))}٪`]].map(([label, value]) => <li key={label}>{label}: {value}</li>)}</ul><div className="idea-footer">{can("hr:productivity:manage") && <button className="secondary-button" disabled={busy} onClick={() => setCreate({spec: {label: "ثبت پیش‌نویس", title: `پیش‌نویس پلن ${scenario.title}`, endpoint: "/api/hr/productivity", method: "PATCH", keys: ["hr:productivity:manage"], fields, toBody: toBody("plan")}})}>ثبت پیش‌نویس</button>}{can("hr:productivity:approve") && <button className="primary-button" disabled={busy} onClick={() => setCreate({spec: {label: "تأیید پلن", title: `تأیید پلن ${scenario.title}`, endpoint: "/api/hr/productivity", method: "PATCH", keys: ["hr:productivity:approve"], fields, toBody: toBody("approve")}})}>تأیید پلن</button>}</div></article>;})}</div></div></section>
+      <section className="panel"><div className="section-heading"><h2>سناریوهای چیدمان شیفت</h2><span>سنجش بازده در برابر ریسک فرسودگی</span></div><div className="dialog-body"><div className="idea-grid">{scenarios.map(scenario => {const tone = scenario.key === "EXTREME" ? "red" : scenario.key === "HIGH" ? "amber" : scenario.key === "MID" ? "blue" : "green"; const companies: {id:string;name:string}[] = data?.companies ?? []; const fields: Field[] = [...(companies.length ? [{name:"companyId",label:"شرکت",type:"select" as const,required:true,value:companies[0].id,options:companies.map(c=>({value:c.id,label:c.name}))}] : []), {name: "period", label: "دوره برنامه‌ریزی", type: "text", required: true}, {name: "from", label: "شروع بازهٔ پلن", type: "date"}, {name: "to", label: "پایان بازهٔ پلن", type: "date"}, ...(scenario.requiresConfirmation ? [{name: "confirm", label: "تأیید قرمز: می‌دانم مرخصی‌های تأییدشده معلق می‌شود و اضافه‌کاری به چند برابر می‌رسد", type: "checkbox" as const}] : [])]; const toBody = (action: string) => (values: Record<string, unknown>) => ({action, companyId:values.companyId, scenario: scenario.key, period: values.period, from: values.from || undefined, to: values.to || undefined, confirm: values.confirm === true}); return <article className="panel idea-card" key={scenario.key}><div className="flex items-center justify-between"><span className="feature-icon"><Target size={23}/></span><Badge tone={tone}>{scenario.title}</Badge></div><p>{scenario.desc}</p><ul className="table-meta">{[["بازده", `${fa(nz(scenario.metrics.output))}٪`], ["هزینه اضافه‌کاری", fa(nz(scenario.metrics.overtimeCost))], ["ریسک خطا", fa(nz(scenario.metrics.errorCost))], ["ریسک فرسودگی", `${fa(nz(scenario.metrics.burnoutRisk))}٪`], ["ریسک ترک خدمت", `${fa(nz(scenario.metrics.turnoverRisk))}٪`]].map(([label, value]) => <li key={label}>{label}: {value}</li>)}</ul><div className="idea-footer">{can("hr:productivity:manage") && <button className="secondary-button" disabled={busy} onClick={() => setCreate({spec: {label: "ثبت پیش‌نویس", title: `پیش‌نویس پلن ${scenario.title}`, endpoint: "/api/hr/productivity", method: "PATCH", keys: ["hr:productivity:manage"], fields, toBody: toBody("plan")}})}>ثبت پیش‌نویس</button>}{can("hr:productivity:approve") && <button className="primary-button" disabled={busy} onClick={() => setCreate({spec: {label: "تأیید پلن", title: `تأیید پلن ${scenario.title}`, endpoint: "/api/hr/productivity", method: "PATCH", keys: ["hr:productivity:approve"], fields, toBody: toBody("approve")}})}>تأیید پلن</button>}</div></article>;})}</div></div></section>
       <Table head={["دوره", "سناریو", "وضعیت", "بازده", "ریسک فرسودگی", "اثرهای فعال", "بازه"]} rows={plans.map(plan => {const effects: Row[] = Array.isArray(plan.effects) ? plan.effects.filter((effect: Row) => effect.active) : []; return [str(plan.period), PLAN_SCENARIOS[plan.scenario as keyof typeof PLAN_SCENARIOS]?.title || str(plan.scenario), badge(plan.status, PLAN_STATUS), `${fa(nz(plan.metrics?.output))}٪`, `${fa(nz(plan.metrics?.burnoutRisk))}٪`, effects.length ? <span className="table-meta">{effects.map(effect => str(effect.title)).join(" · ")}</span> : "—", plan.fromDate && plan.toDate ? `${fshort(plan.fromDate)} تا ${fshort(plan.toDate)}` : "—"];})} empty="پلن شیفتی ثبت نشده است"/>
       <Table head={["واحد مسئول", "هدف", "نتیجه کلیدی", "پیشرفت", "دوره", "وضعیت"]} rows={okrs.map(okr => [str(okr.owner), str(okr.objective), str(okr.keyResult), `${fa(nz(okr.progress))}٪`, str(okr.period), badge(okr.status, OKR_STATUS)])} empty="هدفی ثبت نشده است"/>
     </div>;
@@ -1055,7 +1065,7 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     : viewId === "meetings" && can("hr:meetings:manage")
     ? <button className="primary-button" disabled={busy} onClick={() => {setModalError(""); setMeeting(null);}}><Plus size={18}/>جلسهٔ جدید</button>
     : ["minutes", "my-minutes"].includes(viewId || "") && can("hr:minutes:manage")
-    ? <button className="primary-button" disabled={busy} onClick={() => {setModalError(""); setMinute(null);}}><Plus size={18}/>صورت‌جلسهٔ جدید</button>
+    ? <button className="primary-button" disabled={busy || loading || !data?.meetings?.some((item: {active: boolean}) => item.active)} onClick={() => {setModalError(""); setMinute(null);}}><Plus size={18}/>صورت‌جلسهٔ جدید</button>
     : createSpec && canCreate
     ? <button className="primary-button" onClick={() => {setModalError(""); setCreate({spec: createSpec});}}><Plus size={18}/>{createSpec.label}</button>
     : null;
@@ -1067,6 +1077,10 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     {/* Title, search and the create button share one line; the subtitle hangs
         below them so the controls never drift to the far edge of the window. */}
     <div className="page-heading"><div className="page-heading-main"><span className="eyebrow">{view?.eyebrow || "منابع انسانی"}</span><div className="page-heading-line"><h1>{view?.title || "دسترسی به این بخش فعال نیست"}</h1><div className="page-heading-tools">{searchable && <label className="search-field page-search"><Search size={18}/><input aria-label="جستجو در این بخش" placeholder="جستجو در این بخش…" value={search} onChange={event => setSearch(event.target.value)}/></label>}{createButton}{exportButton}</div></div><p>{view?.subtitle || "مجوز این بخش باید توسط مدیر زیرسیستم به گروه شما اختصاص یابد."}</p></div></div>
+    {meetingId && <div className="section-heading">
+      {data?.meetings?.[0] && <h2>{data.meetings[0].name}</h2>}
+      <Link className="text-button" href={hrHref("minutes")}>همهٔ صورت‌جلسه‌ها</Link>
+    </div>}
     {error && <div role="alert" className="feedback error"><span>{error}</span><button className="text-button" onClick={() => void refresh()}>تلاش دوباره</button></div>}
     {success && <div role="status" className="feedback success"><CheckCircle2 size={18}/>{success}</div>}
     {loading ? <div role="status" className="loading-state"><Loader2 className="animate-spin" size={23}/>در حال دریافت اطلاعات…</div> : error ? null : !view ? <Empty title="مجوز این بخش را ندارید"><Link href="/hr" className="text-button">بازگشت به پیشخوان</Link></Empty> : <>
@@ -1100,6 +1114,10 @@ export default function HrPortal({session, requestedView}: {session: SessionUser
     {hokmBoard && <HokmDialog board={hokmBoard} busy={busy} error={modalError}
       close={() => {setHokmBoard(null); setModalError("");}}
       onSubmit={body => void mutate(async () => {await api("/api/hr/decrees", "POST", body); setHokmBoard(null);}, "حکم صادر شد.", true)}/>}
+    {memberList && <Dialog heading="اعضای جلسه" title={str(memberList.name)} close={() => setMemberList(null)} busy={false}>
+      <div className="dialog-body">{memberList.members.length ? <ul>{memberList.members.map((seat: MeetingSeat) =>
+        <li key={seat.employeeId}>{seat.employee?.name} · {seat.role === "SECRETARY" ? "دبیر" : "عضو"}</li>)}</ul> : <p>هنوز عضوی برای این جلسه ثبت نشده است.</p>}</div>
+    </Dialog>}
     {meeting !== undefined && <MeetingDialog meeting={meeting} employees={data?.employees ?? []} busy={busy} error={modalError}
       close={() => {setMeeting(undefined); setModalError("");}}
       onSubmit={body => void mutate(async () => {await api(meeting ? `/api/hr/meetings/${meeting.id}` : "/api/hr/meetings", meeting ? "PATCH" : "POST", body); setMeeting(undefined);}, "جلسه ذخیره شد.", true)}/>}

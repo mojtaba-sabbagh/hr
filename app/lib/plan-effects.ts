@@ -1,22 +1,9 @@
-// اثرهای پلن بهره‌وری — the consequences of approving a shift plan, in one
-// pure list.
-//
-// The spec lists five effects after approval. Three of them belong to
-// subsystems that do not exist yet (warehouse, maintenance, procurement), and
-// writing them into the service as "if enabled" branches would scatter a
-// decision across the code the day those modules land. So the whole set is
-// derived here, once, from the plan's own factors: `available` says whether
-// this codebase can carry the effect out today, and `params` keeps the numbers
-// so the service can store them on the plan and apply them later without
-// re-deriving anything.
-//
-// No prisma, no clock: the caller passes the scenario definition and (for the
-// leave effect) the period's bounds.
+// Derived from the scenario and the operational subsystems enabled for this plan.
 import {OVERTIME_BUDGET_MINUTES, type PlanScenario} from "./hr-types";
 
 export type PlanRoster = {id: string; name?: string; perf: number; risk: string; burnout: number};
 
-/** The subsystems an effect targets. Only `hr` exists in this codebase today. */
+/** The subsystems an effect targets. The caller supplies the currently enabled modules. */
 export type PlanEffectSubsystem = "hr" | "finance" | "warehouse" | "maintenance" | "procurement";
 
 /**
@@ -66,6 +53,7 @@ export function planEffects(
   def: PlanScenario,
   roster: PlanRoster[],
   period: {from?: string | null; to?: string | null} = {},
+  enabledModules: string[] = [],
 ): PlanEffect[] {
   const factor = def.outputMult;
   const headcount = roster.length;
@@ -74,7 +62,7 @@ export function planEffects(
   const overtimePerPerson = Math.round(OVERTIME_BUDGET_MINUTES * (def.overtimeMult - 1));
   const hasPeriod = Boolean(period.from && period.to);
 
-  return [
+  const effects: PlanEffect[] = [
     {
       key: "leave-hold",
       title: "تعلیق مرخصی‌های تأییدشده",
@@ -92,8 +80,6 @@ export function planEffects(
       key: "overtime-budget",
       title: "درخواست بودجهٔ اضافه‌کاری",
       detail: `برای هر نفر ${overtimePerPerson.toLocaleString("fa-IR")} دقیقه اضافه‌کاری در دوره — ${(overtimePerPerson * headcount).toLocaleString("fa-IR")} دقیقه برای ${headcount.toLocaleString("fa-IR")} نفر.`,
-      // finance is not a subsystem of this portal yet: the service logs an
-      // event and notifies the approvers instead of opening a request.
       subsystem: "finance",
       available: false,
       runtime: "event",
@@ -143,9 +129,17 @@ export function planEffects(
       runtime: "store",
       active: factor > 1.1,
       severity: "notice",
-      params: {items: 4},
+      params: {items: 4, factor},
     },
   ];
+  for (const effect of effects) {
+    if (effect.subsystem !== "hr" && enabledModules.includes(effect.subsystem)
+        && (effect.subsystem !== "procurement" || enabledModules.includes("warehouse"))) {
+      effect.available = true;
+      effect.runtime = "apply";
+    }
+  }
+  return effects;
 }
 
 /** The effects someone would actually notice, for a summary line. */

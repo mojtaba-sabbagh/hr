@@ -99,9 +99,9 @@ test("an operational cause is a notice, an unrecorded one is nothing, and a year
 
 test("rules for missing subsystems are declared and never fire", () => {
   const dormant = INSIGHT_RULES.filter(rule => !rule.available);
-  assert.ok(dormant.length >= 6);
+  assert.ok(dormant.length > 0);
   assert.ok(dormant.every(rule => typeof rule.requires === "string" && rule.evaluate(emptyFacts).length === 0));
-  assert.ok(dormant.some(rule => rule.requires === "warehouse"));
+  assert.ok(INSIGHT_RULES.some(rule => rule.requires === "warehouse" && rule.available));
   assert.ok(dormant.some(rule => rule.requires === "shiftwise"));
   // Running every rule over empty facts still yields nothing from them.
   assert.equal(evaluateInsights(emptyFacts).rows.length, 0);

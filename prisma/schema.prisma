@@ -187,6 +187,8 @@ model CoreIdeaVote {
 }
 
 model HrEmployee {
+  assignedAssets EmployeeAsset[]
+  @@unique([companyId, id])
   id            String   @id @default(cuid())
   personnelCode String   @unique
   name          String
@@ -427,7 +429,7 @@ model HrContract {
   companyId  String
   company    Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
   employeeId String
-  employee   HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee   HrEmployee @relation(fields: [companyId, employeeId], references: [companyId, id], onDelete: Restrict, onUpdate: Restrict)
   // PERMANENT | PAYMANI | ANNUAL | FIXED_TERM | PROBATION | PROJECT | CONTRACTOR
   kind       String
   startDate  DateTime  @db.Date
@@ -876,7 +878,9 @@ model HrOkr {
 // سناریوی چیدمان شیفت سه‌ماهه با معیارهای مالی و ریسک نیروی انسانی.
 model HrShiftPlan {
   id         String   @id @default(cuid())
-  period     String   @unique
+  companyId  String?
+  company    Company? @relation(fields: [companyId], references: [id])
+  period     String
   scenario   String
   status     String   @default("DRAFT")
   metrics    Json
@@ -896,6 +900,7 @@ model HrShiftPlan {
   createdBy  String
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  @@unique([companyId, period])
   @@index([status])
 }
 
@@ -1337,6 +1342,7 @@ model HseCapa {
 
 // Company workspaces are isolated from the legacy, installation-wide HR records.
 model Company {
+  employeeAssets EmployeeAsset[]
   id          String @id @default(cuid())
   slug        String @unique
   name        String
@@ -1361,6 +1367,13 @@ model Company {
   hrDecreeTemplates HrDecreeTemplate[]
   hrMeetings    HrMeeting[]
   hrMinutes     HrMeetingMinute[]
+  shiftPlans    HrShiftPlan[]
+  budgets       OpsBudget[]
+  inventory     OpsItem[]
+  suppliers     OpsSupplier[]
+  purchases     OpsPurchase[]
+  assets        OpsAsset[]
+  overtime      OpsOvertime[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -1628,4 +1641,220 @@ model CompanyAudit {
   detail     String
   createdAt  DateTime @default(now())
   @@index([companyId, createdAt])
+}
+
+model OpsBudget {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  center String
+  year Int
+  startsAt DateTime @db.Date
+  endsAt DateTime @db.Date
+  allocation BigInt
+  purchases OpsPurchase[]
+  expenses OpsExpense[]
+  @@unique([companyId, center, year])
+}
+
+model OpsExpense {
+  id String @id @default(cuid())
+  budgetId String
+  budget OpsBudget @relation(fields: [budgetId], references: [id])
+  description String
+  kind String
+  amount BigInt
+  createdAt DateTime @default(now())
+}
+
+model OpsItem {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  code String
+  name String
+  unit String
+  category String
+  onHand Int @default(0)
+  minimum Int
+  maximum Int
+  unitCost BigInt
+  leadDays Int
+  reorder Int
+  partClass String @default("C")
+  purchases OpsPurchase[]
+  moves OpsMove[]
+  issues OpsIssue[]
+  createdAt DateTime @default(now())
+  @@unique([companyId, code])
+}
+
+model OpsSupplier {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  name String
+  category String
+  rating Float
+  onTime Int
+  quotes OpsQuote[]
+  @@unique([companyId, name])
+}
+
+model OpsPurchase {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  itemId String
+  item OpsItem @relation(fields: [itemId], references: [id])
+  budgetId String?
+  budget OpsBudget? @relation(fields: [budgetId], references: [id])
+  specification String
+  quantity Int
+  received Int @default(0)
+  quoteDeadline DateTime @db.Date
+  status String @default("REQUESTED")
+  requestedBy String
+  selectedQuoteId String? @unique
+  selectedQuote OpsQuote? @relation("Chosen", fields: [selectedQuoteId], references: [id])
+  approvedBy String?
+  authorizedBy String?
+  reason String @default("")
+  sourcePlanId String?
+  orderedAt DateTime?
+  dueAt DateTime?
+  deliveredAt DateTime?
+  createdAt DateTime @default(now())
+  quotes OpsQuote[] @relation("Offers")
+  moves OpsMove[]
+  @@index([companyId, status])
+  @@index([itemId, createdAt])
+}
+
+model OpsQuote {
+  id String @id @default(cuid())
+  purchaseId String
+  purchase OpsPurchase @relation("Offers", fields: [purchaseId], references: [id])
+  chosenFor OpsPurchase? @relation("Chosen")
+  supplierId String
+  supplier OpsSupplier @relation(fields: [supplierId], references: [id])
+  unitPrice BigInt
+  leadDays Int
+  @@unique([purchaseId, supplierId])
+}
+
+model OpsMove {
+  id String @id @default(cuid())
+  itemId String
+  item OpsItem @relation(fields: [itemId], references: [id])
+  kind String
+  delta Int
+  balance Int
+  reference String
+  actorId String
+  purchaseId String?
+  purchase OpsPurchase? @relation(fields: [purchaseId], references: [id])
+  issueId String? @unique
+  issue OpsIssue? @relation(fields: [issueId], references: [id])
+  createdAt DateTime @default(now())
+  @@index([itemId, createdAt])
+}
+
+model OpsIssue {
+  id String @id @default(cuid())
+  itemId String
+  item OpsItem @relation(fields: [itemId], references: [id])
+  quantity Int
+  purpose String
+  workId String?
+  work OpsWorkOrder? @relation(fields: [workId], references: [id])
+  requestedBy String
+  status String @default("PENDING")
+  move OpsMove?
+  createdAt DateTime @default(now())
+  @@index([itemId, status])
+}
+
+model EmployeeAsset {
+  id         String     @id @default(cuid())
+  companyId  String
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  number     String
+  name       String
+  category   String
+  employeeId String
+  employee   HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  version    Int        @default(1)
+
+  @@unique([companyId, number])
+  @@index([companyId, employeeId])
+}
+
+model OpsAsset {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  code String
+  name String
+  location String
+  criticality String
+  installedAt DateTime @db.Date
+  documents String
+  intervalDays Int
+  serviceBase DateTime @db.Date
+  readings OpsReading[]
+  works OpsWorkOrder[]
+  @@unique([companyId, code])
+}
+
+model OpsReading {
+  id String @id @default(cuid())
+  assetId String
+  asset OpsAsset @relation(fields: [assetId], references: [id])
+  indicator String
+  measured Float
+  normal Float
+  failure Int
+  health Int
+  mttr Float
+  mtbf Float
+  createdAt DateTime @default(now())
+  @@index([assetId, createdAt])
+}
+
+model OpsWorkOrder {
+  id String @id @default(cuid())
+  assetId String
+  asset OpsAsset @relation(fields: [assetId], references: [id])
+  kind String
+  diagnosis String
+  action String @default("")
+  downtimeHours Float @default(0)
+  reportedBy String
+  safety Boolean @default(false)
+  createdAt DateTime @default(now())
+  closedAt DateTime?
+  sourcePlanId String?
+  issues OpsIssue[]
+  @@index([assetId, closedAt])
+  @@unique([sourcePlanId, assetId])
+}
+
+model OpsOvertime {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  planId String @unique
+  period String
+  minutes Int
+  status String @default("PENDING")
+}
+
+// Store the result of a posted form so a network retry cannot post stock or cost twice.
+model OpsPosting {
+  token String @id
+  companyId String
+  actorId String
+  operation String
+  target String
 }

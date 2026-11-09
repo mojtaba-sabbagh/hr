@@ -40,7 +40,7 @@ export function prototypePermissions(role: PrototypeRole): string[] {
   return [...permissions].sort();
 }
 export function prototypeCompanyPermissions(role: PrototypeRole): CompanyPermission[] {
-  if (role === "deputy") return ["entries:view", "audit:view", "settings:manage"];
+  if (role === "deputy") return ["entries:view", "audit:view", "settings:manage", "purchases:authorize"];
   if (role === "employee") return [];
   return ["entries:team", ...(ownModules[role] || []).map(module => `entries:view:${module}` as CompanyPermission)];
 }

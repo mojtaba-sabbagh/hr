@@ -1,5 +1,7 @@
 # AI in the HR + HSE portal — where it fits, what is already built, what to build next
 
+The November 7 implementation connects AI-02, AI-06, AI-08 and AI-12 to the four operational workspaces. The blockers below describe the November 6 baseline. See [Operations](OPERATIONS.md) for the current behavior and access rules.
+
 Investigated 2026-11-06. Sources: `materials/08-فلوچارت-و-الگوریتم-های-هوش-مصنوعی.pdf` (45p, the
 authoritative engine spec), `materials/01-کاتالوگ-جامع.pdf`, `materials/06-کتاب-فرایندها.pdf`, the
 prototypes in `materials/`, and the codebase as it stands (`app/lib/*`, `prisma/schema.prisma`,

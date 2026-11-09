@@ -15,14 +15,8 @@
 require("./register-workflow.cjs");
 const {test, before, after} = require("node:test");
 const assert = require("node:assert/strict");
-const {execFileSync} = require("node:child_process");
-require("@next/env").loadEnvConfig(process.cwd());
-const {PrismaClient} = require("@prisma/client");
-const sourceUrl = process.env.DATABASE_URL;
-assert.ok(sourceUrl, "DATABASE_URL is required");
-const schemaName = `hrmeet_test_${process.pid}_${Date.now()}`;
-const testUrl = new URL(sourceUrl); testUrl.searchParams.set("schema", schemaName); process.env.DATABASE_URL = testUrl.toString();
-let control, db, service, meetings, signature, A, B;
+const {createMeetingDatabase} = require("./meeting-database.cjs");
+let database, db, service, meetings, signature, A, B;
 let alice, bob, carol, dave, frank;
 const root = {id: "env-super-admin", name: "root", email: "root@hr-meet-test.invalid", role: "SUPER_ADMIN", permissions: [], groups: [], subsystemKeys: ["hr"], adminSubsystemKeys: []};
 const actor = (id, name, permissions = []) => ({id, name, email: `${name}@hr-meet-test.invalid`, role: "USER", permissions, groups: [], subsystemKeys: ["hr"], adminSubsystemKeys: []});
@@ -36,11 +30,8 @@ async function file(member, code, companyId) {
 }
 
 before(async () => {
-  control = new PrismaClient({datasources: {db: {url: sourceUrl}}});
-  assert.match(schemaName, /^hrmeet_test_\d+_\d+$/);
-  await control.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`);
-  execFileSync(process.execPath, [require.resolve("prisma/build/index.js"), "migrate", "deploy"], {env: process.env, stdio: "pipe"});
-  ({prisma: db} = require("../app/lib/prisma.ts"));
+  database = await createMeetingDatabase();
+  db = database.db;
   service = require("../app/lib/company-service.ts");
   meetings = require("../app/lib/hr-meetings.ts");
   signature = require("../app/lib/signature.ts");
@@ -62,7 +53,7 @@ before(async () => {
   frank = {name: "frank", userId: null, profileId: (await file({name: "فرانک", userId: null}, "A-F", A.id)).id};
   for (const who of [alice, bob]) await signature.saveSignature(actor(who.userId, who.name), {image: PNG});
 });
-after(async () => {await db?.$disconnect(); if (control) {assert.match(schemaName, /^hrmeet_test_\d+_\d+$/); await control.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`); await control.$disconnect();}});
+after(async () => {await database?.close();});
 
 const manage = () => actor(carol.userId, "carol", ["hr:meetings:manage", "hr:minutes:manage", "hr:minutes:view", "hr:minutes:sign"]);
 const signedMinute = {id: null, number: "ص-۱۴۰۵/۰۱"};
@@ -207,6 +198,10 @@ test("a member sees the papers of their own meeting, not the company's archive",
   // the same company as the ones he signed.
   const closed = await meetings.saveMeeting(manage(), {name: "کمیتهٔ انتظامی", seats: [{employeeId: alice.profileId, role: "SECRETARY"}]});
   const elsewhere = await meetings.saveMinute(manage(), {meetingId: closed.id, number: "ص-۱۴۰۵/۰۸", date: day(0), attendees: [{employeeId: alice.profileId, present: true}]});
+  await meetings.saveMeeting(manage(), {name: closed.name, active: false}, closed.id);
+  const selected = await meetings.listMinutes(manage(), new URLSearchParams({meetingId: closed.id}));
+  assert.deepEqual(selected.rows.map(row => row.id), [elsewhere.id]);
+  assert.deepEqual(selected.meetings.map(row => [row.id, row.active]), [[closed.id, false]]);
   const selfOnly = await meetings.listMinutes(actor(bob.userId, "bob", ["hr:minutes:self"]));
   assert.ok(selfOnly.rows.some(row => row.id === signedMinute.id));
   assert.deepEqual(selfOnly.rows.filter(row => row.id === elsewhere.id), []);
@@ -225,8 +220,61 @@ test("a member sees the papers of their own meeting, not the company's archive",
   assert.equal(other.companyId, B.id);
   const daveList = await meetings.listMinutes(daveManage);
   assert.deepEqual(daveList.rows.map(row => row.id), [other.id]);
+  await denied(() => meetings.listMinutes(daveManage, new URLSearchParams({meetingId: closed.id})), 404);
   await denied(() => meetings.minuteSheet(daveManage, signedMinute.id), 404);
   // The same number is unique inside a company, not across the portal.
   await denied(() => meetings.saveMinute(manage(), {meetingId: meetingOne.id, number: signedMinute.number, date: day(0)}), 409);
   await denied(() => meetings.listMinutes(actor(frank.profileId, "frank", [])), 403);
+});
+
+test("changing meeting membership affects the next attendance list, not saved minutes", async () => {
+  const actor = manage();
+  const meeting = await meetings.saveMeeting(actor, {name: "کمیتهٔ برنامه", seats: [{employeeId: alice.profileId}, {employeeId: bob.profileId}]});
+  const old = await meetings.saveMinute(actor, {meetingId: meeting.id, number: "roster-1", date: day(0),
+    attendees: [{employeeId: alice.profileId, present: true}, {employeeId: bob.profileId, present: false}]});
+  const seats = [{employeeId: carol.profileId, role: "SECRETARY"}];
+  await meetings.saveMeeting(actor, {name: meeting.name, seats}, meeting.id);
+  // An invalid replacement must roll back even though the service replaces the entire seat list.
+  await denied(() => meetings.saveMeeting(actor, {name: "نام دیگر", seats: [{employeeId: dave.profileId}]}, meeting.id), 400);
+  const board = await meetings.listMinutes(actor, new URLSearchParams({meetingId: meeting.id}));
+  assert.equal(board.meetings[0].name, meeting.name);
+  assert.deepEqual(board.meetings[0].members.map(({employeeId, role}) => ({employeeId, role})), seats);
+  assert.deepEqual(board.rows.map(row => row.id), [old.id]);
+  assert.deepEqual(board.rows[0].attendees.map(({employeeId, present}) => [employeeId, present]),
+    [[alice.profileId, true], [bob.profileId, false]]);
+});
+
+test("editing a draft replaces removed resolutions and persists the remaining decision, owner and deadline", async () => {
+  const actor = manage();
+  const meeting = await meetings.saveMeeting(actor, {name: "کمیتهٔ بودجه"});
+  const fields = {meetingId: meeting.id, number: "decisions-1", date: day(0)};
+  const draft = await meetings.saveMinute(actor, {...fields, resolutions: [{text: "ردیف اول"}, {text: "ردیف دوم"}]});
+  const due = day(3);
+  await meetings.saveMinute(actor, {...fields, resolutions: [{itemNo: "۲", text: "بازنگری هزینه‌ها", result: false, ownerId: bob.profileId, dueDate: due}]}, draft.id);
+  await denied(() => meetings.saveMinute(actor, {...fields, resolutions: [{text: ""}]}, draft.id), 400);
+  const {minute} = await meetings.minuteSheet(actor, draft.id);
+  assert.equal(minute.status, "DRAFT");
+  assert.deepEqual(minute.resolutions.map(r => [r.itemNo, r.text, r.result, r.ownerId, r.dueDate.toISOString().slice(0, 10)]),
+    [["۲", "بازنگری هزینه‌ها", false, bob.profileId, due]]);
+});
+
+test("the invitation and signature queue follow recorded attendance until signing", async () => {
+  const {hrQueue} = require("../app/lib/hr-queue.ts");
+  const meeting = await meetings.saveMeeting(manage(), {name: "شورای اجرایی", seats: [{employeeId: alice.profileId}, {employeeId: bob.profileId}]});
+  const minute = await meetings.saveMinute(manage(), {meetingId: meeting.id, number: "queue-1", date: day(0),
+    attendees: [{employeeId: alice.profileId, present: true}, {employeeId: bob.profileId, present: false}]});
+  const aliceSession = actor(alice.userId, "alice", ["hr:minutes:self", "hr:minutes:sign"]);
+  const bobSession = actor(bob.userId, "bob", ["hr:minutes:self", "hr:minutes:sign"]);
+  const pending = async session => (await hrQueue(session)).rows.filter(row => row.id === `minute:${minute.id}`);
+  assert.deepEqual(await pending(aliceSession), []);
+  await denied(() => meetings.sendMinuteForSignature(aliceSession, minute.id), 403);
+  await meetings.sendMinuteForSignature(manage(), minute.id);
+  const invitations = await db.hrNotification.findMany({where: {body: {startsWith: minute.number}, title: "صورت‌جلسه در انتظار امضای شماست"}});
+  assert.deepEqual(invitations.map(row => row.recipientId), [alice.userId]);
+  assert.deepEqual((await pending(aliceSession)).map(row => row.view), ["my-minutes"]);
+  assert.deepEqual(await pending(bobSession), []);
+  await denied(() => meetings.signMinute(actor(alice.userId, "alice", ["hr:minutes:self"]), minute.id), 403);
+  await meetings.signMinute(aliceSession, minute.id);
+  assert.equal((await meetings.minuteSheet(manage(), minute.id)).minute.status, "SIGNED");
+  assert.deepEqual(await pending(aliceSession), []);
 });

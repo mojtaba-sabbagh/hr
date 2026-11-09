@@ -241,7 +241,7 @@ async function seedTalent(employees: Map<string, string>) {
   }
 }
 
-async function seedProductivity(employees: Map<string, string>) {
+async function seedProductivity(companyId:string, employees: Map<string, string>) {
   const okrs = [
     {owner: "واحد تولید – خط ۱", objective: "افزایش بهره‌وری خط تولید", keyResult: "OEE از ۷۴٪ به ۸۵٪", progress: 71, period: "پاییز ۱۴۰۵"},
     {owner: "منابع انسانی", objective: "کاهش نرخ ترک خدمت", keyResult: "ترک خدمت زیر ۸٪ در سال", progress: 45, period: "پاییز ۱۴۰۵"},
@@ -285,7 +285,7 @@ async function seedProductivity(employees: Map<string, string>) {
   // numbers are not lost.
   const factors = planFactors(def);
   const effects = planEffects(def, roster);
-  await prisma.hrShiftPlan.upsert({where: {period}, create: {period, scenario: "MID", status: "APPROVED", metrics, factors, effects, approvedBy: "seed", approvedAt: new Date(), createdBy: "seed"}, update: {scenario: "MID", status: "APPROVED", metrics, factors, effects}});
+  await prisma.hrShiftPlan.upsert({where: {companyId_period:{companyId,period}}, create: {companyId,period, scenario: "MID", status: "APPROVED", metrics, factors, effects, approvedBy: "seed", approvedAt: new Date(), createdBy: "seed"}, update: {scenario: "MID", status: "APPROVED", metrics, factors, effects}});
   // One ledger row, so the AI event table is not empty on a fresh database and
   // the "why is this here" question has a written answer.
   if (!await prisma.hrAiEvent.findFirst({where: {engine: "plan", dedupeKey: `plan-approved:${period}`}})) {
@@ -836,7 +836,7 @@ async function main() {
   const employees = await seedEmployees(users, company.id);
   await seedChart(company.id);
   await seedTalent(employees);
-  await seedProductivity(employees);
+  await seedProductivity(company.id,employees);
   await seedRegulations();
   await seedKargarzini(company.id, employees, users);
   await seedMeetings(company.id, employees, users);

@@ -6,7 +6,7 @@ import { AccessError } from "@/app/lib/access-policy";
 import HrPortal from "@/app/components/hr-portal";
 
 export const dynamic = "force-dynamic";
-export default async function HrPage({searchParams}: {searchParams: {view?: string}}) {
+export default async function HrPage({searchParams}: {searchParams: {view?: string; meetingId?: string}}) {
   const session = await getSession();
   if (!session) redirect("/login");
   try { await requireHr(session); }
@@ -14,5 +14,6 @@ export default async function HrPage({searchParams}: {searchParams: {view?: stri
     if (!(error instanceof AccessError)) throw error;
     return <main className="access-denied"><img src="/brand/itfco-logo.webp" alt="هوشمند فناوران برتر ایرانیان" width={172}/><h1>دسترسی به منابع انسانی</h1><p>{error.message}</p><Link href="/" className="primary-button">بازگشت به پرتال</Link></main>;
   }
-  return <HrPortal session={session} requestedView={searchParams.view || "dashboard"}/>;
+  const meetingId = searchParams.view === "minutes" && typeof searchParams.meetingId === "string" ? searchParams.meetingId : "";
+  return <HrPortal key={meetingId} session={session} requestedView={searchParams.view || "dashboard"} meetingId={meetingId}/>;
 }

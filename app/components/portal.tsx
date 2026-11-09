@@ -3,14 +3,17 @@
 import Link from "next/link";
 import AppShell, { type NavItem } from "./app-shell";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowUpLeft, Boxes, CalendarClock, Factory, Gauge, HardHat, LayoutDashboard, Settings2, ShieldCheck, Users, Wrench, Wallet, ShoppingCart, Layers, Headphones, Loader2, GitBranch, Building2 } from "lucide-react";
+import { ArrowUpLeft, Boxes, CalendarClock, Factory, Gauge, HardHat, LayoutDashboard, PackageCheck, Settings2, ShieldCheck, Users, Wrench, Wallet, ShoppingCart, Layers, Headphones, Loader2, GitBranch, Building2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { SessionUser } from "@/app/lib/session-types";
 import { PERMISSIONS, SUBSYSTEMS } from "@/app/lib/access-catalog";
+import { hasPermission } from "@/app/lib/access-policy";
+import { groupTitle, meetingWorkspaceHref } from "@/app/lib/hr-navigation";
 import AccessManagement, { type AccessTab } from "./access-management";
 
 type Module = {key: string; title: string; description: string; enabled: boolean; dependencies: readonly string[]};
 const appearance: Record<string, {icon: LucideIcon; color: string}> = {
+  assets: {icon: PackageCheck, color: "#0f766e"},
   core: {icon: LayoutDashboard, color: "#058240"}, hr: {icon: Users, color: "#7c3aed"},
   hse: {icon: HardHat, color: "#ea580c"}, shiftwise: {icon: CalendarClock, color: "#0891b2"},
   production: {icon: Factory, color: "#16a34a"}, maintenance: {icon: Wrench, color: "#ca8a04"},
@@ -18,7 +21,7 @@ const appearance: Record<string, {icon: LucideIcon; color: string}> = {
   warehouse: {icon: Boxes, color: "#a16207"}, procurement: {icon: ShoppingCart, color: "#16a34a"},
   development: {icon: Layers, color: "#0f766e"}, support: {icon: Headphones, color: "#6366f1"},
 };
-const workspace: Record<string, string> = {core: "/core", hr: "/hr", hse: "/hse", shiftwise: "/work?category=shiftwise", finance: "/work?category=finance", warehouse: "/work?category=warehouse", procurement: "/work?category=procurement", maintenance: "/work?category=maintenance", development: "/work?category=development", support: "/work?category=support"};
+const workspace: Record<string, string> = {core: "/core", hr: "/hr", hse: "/hse", shiftwise: "/work?category=shiftwise", finance: "/finance", warehouse: "/warehouse", assets: "/assets", procurement: "/procurement", maintenance: "/maintenance", development: "/work?category=development", support: "/work?category=support"};
 type Panel = "subsystems" | AccessTab;
 
 export default function Portal({session: initialSession}: {session: SessionUser}) {
@@ -34,6 +37,9 @@ export default function Portal({session: initialSession}: {session: SessionUser}
   const inAdmin = canManage && admin;
   const enabled = mods.filter(m => m.enabled && (isSuper || session.subsystemKeys.includes(m.key)));
   const visible = inAdmin && isSuper ? mods : enabled;
+  const meetingHref = enabled.some(module => module.key === "hr")
+    ? meetingWorkspaceHref(key => hasPermission(session, key))
+    : null;
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -91,9 +97,10 @@ export default function Portal({session: initialSession}: {session: SessionUser}
       {error && <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-red-50 p-4 text-sm text-red-700"><span>{error}</span><button type="button" className="underline" onClick={() => {setError(""); void refresh();}}>تلاش دوباره</button></div>}
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div><div className="mb-2 text-sm font-semibold text-blue-600">{inAdmin ? "مدیریت پرتال" : "نمای کلی سامانه"}</div><h1 className="text-2xl font-black sm:text-3xl">{inAdmin ? isSuper ? "پنل ابرادمین" : "مدیریت کاربران و دسترسی‌ها" : "داشبورد معاونت توسعه"}</h1><p className="mt-3 text-sm leading-7 text-slate-500">{inAdmin ? isSuper ? "زیرسیستم‌ها، مدیران و دسترسی گروه‌های سازمان را مدیریت کنید." : `حوزه مدیریت شما: ${SUBSYSTEMS.filter(s => session.adminSubsystemKeys.includes(s.key)).map(s => s.title).join("، ") || "تعیین نشده"}` : "دسترسی متمرکز به سرویس‌های فعال سازمان"}</p></div>
+        {!inAdmin && meetingHref && <Link href={meetingHref} className="primary-button"><CalendarClock size={18}/>{groupTitle("meet")}</Link>}
         {(!inAdmin || panel === "subsystems") && <div className="flex gap-6 rounded-2xl border border-slate-100 bg-white px-5 py-3 text-sm shadow-sm"><div><div className="text-slate-400">فعال</div><b className="text-xl">{enabled.length.toLocaleString("fa-IR")}</b></div><div><div className="text-slate-400">کل زیرسیستم‌ها</div><b className="text-xl">{visible.length.toLocaleString("fa-IR")}</b></div></div>}
       </div>
-      {inAdmin && <nav aria-label="بخش‌های مدیریت" className="mb-7 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2">{tabs.map(tab => <button type="button" key={tab.id} aria-current={panel === tab.id ? "page" : undefined} onClick={() => setPanel(tab.id)} className={`rounded-xl px-4 py-2.5 text-sm font-semibold ${panel === tab.id ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}>{tab.title}</button>)}</nav>}
+      {inAdmin && <nav aria-label="بخش‌های مدیریت" className="mb-7 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2">{tabs.map(tab => <button type="button" key={tab.id} aria-current={panel === tab.id ? "page" : undefined} onClick={() => setPanel(tab.id)} className={`rounded-xl px-4 py-2.5 text-[1.1rem] leading-[1.7] font-semibold ${panel === tab.id ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}>{tab.title}</button>)}</nav>}
       {inAdmin && panel !== "subsystems" ? <AccessManagement key={`${session.role}:${session.adminSubsystemKeys.join(",")}`} tab={panel} session={session} onTabChange={setPanel}/> : <>
         {!loaded && !error && <p role="status" className="flex items-center gap-2 py-10 text-sm text-slate-500"><Loader2 size={18} className="animate-spin"/>در حال دریافت زیرسیستم‌ها…</p>}
         {inAdmin && isSuper ? <div className="grid gap-4">{mods.map(module => {
@@ -103,7 +110,7 @@ export default function Portal({session: initialSession}: {session: SessionUser}
           const {icon: Icon, color} = appearance[module.key];
           const permissions = PERMISSIONS.filter(p => p.subsystemKey === module.key && (isSuper || session.permissions.includes(p.key)));
           const groups = session.groups.filter(g => g.subsystemKey === module.key);
-          return <article key={module.key} className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-start justify-between"><div className="rounded-xl p-3" style={{background: `${color}18`, color}}><Icon size={23}/></div><span className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700">در دسترس</span></div><h2 className="mt-4 font-bold">{module.title}</h2>{module.key === "core" && <Link href="/core" className="primary-button mt-4 w-full">ورود به هسته پرتال</Link>}{module.key === "hr" && <Link href="/hr" className="primary-button mt-4 w-full">ورود به منابع انسانی</Link>}{!["core", "hr"].includes(module.key) && workspace[module.key] && <Link href={workspace[module.key]} className="primary-button mt-4 w-full">فرم‌ها و فرایندهای بخش<ArrowUpLeft size={15}/></Link>}<details className="mt-5 border-t border-slate-100 pt-4 text-sm"><summary className="cursor-pointer text-blue-600">گروه‌ها و مجوزهای من ({permissions.length.toLocaleString("fa-IR")})</summary><div className="mt-3 flex flex-wrap gap-1">{groups.map(g => <span key={g.id} className="rounded-lg bg-slate-100 px-2 py-1 text-xs">{g.name}</span>)}</div>{session.adminSubsystemKeys.includes(module.key) && <p className="mt-2 flex items-center gap-1 text-xs text-blue-600"><ShieldCheck size={14}/>ادمین زیرسیستم</p>}<ul className="mt-3 space-y-2 text-xs text-slate-600">{permissions.map(p => <li key={p.key}>{p.title}</li>)}</ul>{!permissions.length && <p className="mt-2 text-xs text-slate-400">مجوز عملیاتی از گروهی دریافت نشده است.</p>}</details></article>;
+          return <article key={module.key} className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-start justify-between"><div className="rounded-xl p-3" style={{background: `${color}18`, color}}><Icon size={23}/></div><span className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700">در دسترس</span></div><h2 className="mt-4 font-bold">{module.title}</h2>{module.key === "core" && <Link href="/core" className="primary-button mt-4 w-full">ورود به هسته پرتال</Link>}{module.key === "hr" && <Link href="/hr" className="primary-button mt-4 w-full">ورود به منابع انسانی</Link>}{!["core", "hr"].includes(module.key) && workspace[module.key] && <Link href={workspace[module.key]} className="primary-button mt-4 w-full">{workspace[module.key].startsWith("/work") ? "فرم‌ها و فرایندهای بخش" : "ورود به " + module.title}<ArrowUpLeft size={15}/></Link>}<details className="mt-5 border-t border-slate-100 pt-4 text-sm"><summary className="cursor-pointer text-blue-600">گروه‌ها و مجوزهای من ({permissions.length.toLocaleString("fa-IR")})</summary><div className="mt-3 flex flex-wrap gap-1">{groups.map(g => <span key={g.id} className="rounded-lg bg-slate-100 px-2 py-1 text-xs">{g.name}</span>)}</div>{session.adminSubsystemKeys.includes(module.key) && <p className="mt-2 flex items-center gap-1 text-xs text-blue-600"><ShieldCheck size={14}/>ادمین زیرسیستم</p>}<ul className="mt-3 space-y-2 text-xs text-slate-600">{permissions.map(p => <li key={p.key}>{p.title}</li>)}</ul>{!permissions.length && <p className="mt-2 text-xs text-slate-400">مجوز عملیاتی از گروهی دریافت نشده است.</p>}</details></article>;
         })}{loaded && !enabled.length && <p className="col-span-full rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">زیرسیستم فعالی برای شما در دسترس نیست. برای عضویت در گروه با ادمین زیرسیستم تماس بگیرید.</p>}</div>}
       </>}
   </AppShell>;

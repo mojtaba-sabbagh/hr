@@ -145,8 +145,21 @@ export function shortTitle(id: string, fallback: string) {
  * CAPA notices and the inbox all carry one, and none of them should land on /hr.
  */
 export function hrHref(id: string) {
+  const operational = /^(warehouse|maintenance|procurement):([^:]+)$/.exec(id);
+  if (operational) return "/"+operational[1]+"?company="+encodeURIComponent(operational[2]);
   if (id.startsWith("hse:")) return `/hse?view=${id}`;
   return id === "dashboard" ? "/hr" : `/hr?view=${id}`;
+}
+
+export const MEETING_VIEW_KEYS = {
+  meetings: ["hr:meetings:view", "hr:meetings:manage", "hr:minutes:manage"],
+  minutes: ["hr:minutes:view", "hr:minutes:manage"],
+};
+
+export function meetingWorkspaceHref(can: (key: string) => boolean) {
+  if (MEETING_VIEW_KEYS.meetings.some(can)) return hrHref("meetings");
+  if (MEETING_VIEW_KEYS.minutes.some(can)) return hrHref("minutes");
+  return null;
 }
 
 export function groupOfView(id: string): HrGroupId {

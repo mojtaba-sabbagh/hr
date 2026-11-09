@@ -12,6 +12,7 @@ The materials update adds a public landing page, a company workspace, a company 
 | `/admin` | Company form designer and administration; available tabs follow company permissions |
 | `/hse` | Company workspace with HSE framing and the HSE form category selected |
 | `/work?category=finance` | Department-focused request catalogue; also supports HR, warehouse, procurement, maintenance, support, development and shiftwise |
+| `/finance`, `/procurement`, `/warehouse`, `/maintenance` | Dedicated company-scoped budgets, orders, stock and work orders. See [Operations](OPERATIONS.md). |
 | `/hr`, `/core` | Existing installation-wide HR and core features |
 
 ## First-time setup

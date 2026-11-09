@@ -6,11 +6,12 @@ export const SUBSYSTEMS = [
   { key: "hse", title: "HSE و محیط‌زیست", description: "ایمنی، بهداشت، ریسک و محیط‌زیست", enabled: true, dependencies: ["core", "hr"] },
   { key: "shiftwise", title: "ShiftWise · شیفت‌بندی هوشمند", description: "شیفت، جابجایی و کنترل پوشش", enabled: true, dependencies: ["core", "hr"] },
   { key: "production", title: "تولید و سفارشات", description: "ظرفیت، سفارشات و برنامه تولید", enabled: false, dependencies: ["core"] },
-  { key: "maintenance", title: "تعمیر و نگهداری", description: "تجهیزات، دستورکارها و سرویس دوره‌ای", enabled: false, dependencies: ["core", "production"] },
+  { key: "maintenance", title: "تعمیر و نگهداری", description: "تجهیزات، دستورکارها و سرویس دوره‌ای", enabled: true, dependencies: ["core"] },
   { key: "analytics", title: "تحلیل و گزارش سازمانی", description: "مرکز فرمان معاونت، شاخص‌ها و گزارش‌ها", enabled: false, dependencies: ["core"] },
-  { key: "finance", title: "مالی و بودجه", description: "بودجه، فاکتورها، پرداخت‌ها و هزینه‌ها", enabled: false, dependencies: ["core"] },
-  { key: "warehouse", title: "انبار و لجستیک", description: "موجودی، درخواست کالا و رسید انبار", enabled: false, dependencies: ["core"] },
-  { key: "procurement", title: "سفارشات و تدارکات", description: "خرید، تأمین‌کنندگان و سفارش‌ها", enabled: false, dependencies: ["core"] },
+  { key: "finance", title: "مالی و بودجه", description: "بودجه، فاکتورها، پرداخت‌ها و هزینه‌ها", enabled: true, dependencies: ["core"] },
+  { key: "warehouse", title: "انبار و لجستیک", description: "موجودی، درخواست کالا و رسید انبار", enabled: true, dependencies: ["core"] },
+  { key: "assets", title: "اموال", description: "ثبت اموال، تحویل به کارکنان و انتقال بین افراد", enabled: true, dependencies: ["core", "hr"] },
+  { key: "procurement", title: "سفارشات و تدارکات", description: "خرید، تأمین‌کنندگان و سفارش‌ها", enabled: true, dependencies: ["core"] },
   { key: "development", title: "توسعه و پروژه‌ها", description: "پروژه‌ها، گانت و بررسی ایده‌ها", enabled: false, dependencies: ["core"] },
   { key: "support", title: "خدمات پشتیبانی", description: "خدمات، تیکت‌ها و تعهد پاسخ‌گویی", enabled: false, dependencies: ["core"] },
 ] as const;
@@ -31,8 +32,9 @@ const resources: Record<string, Resource[]> = {
   maintenance: [["assets", "تجهیزات و کارت تجهیز", ["view", "manage"]], ["work-orders", "دستورکارهای تعمیرات", ["view", "manage", "approve"]], ["preventive", "سرویس دوره‌ای (PM)", ["view", "manage"]], ["breakdown", "گزارش خرابی", ["submit"]]],
   analytics: [["dashboard", "مرکز فرمان و کارنامه واحدها", ["view"]], ["sla", "گلوگاه‌ها و SLA", ["view"]], ["okr", "اهداف و شاخص‌ها", ["view", "manage"]], ["reports", "گزارش ماهانه معاونت", ["view", "export"]], ["plans", "پلن‌های بهره‌وری", ["view", "approve"]]],
   finance: [["budgets", "بودجه‌ها", ["view", "manage", "approve"]], ["invoices", "فاکتورها", ["view", "manage", "approve"]], ["payments", "پرداخت‌ها", ["view", "manage", "approve"]], ["expenses", "هزینه‌ها", ["view", "manage", "approve"]], ["cash", "جریان نقدی و تحلیل هزینه", ["view", "export"]], ["authority", "ماتریس اختیارات مالی", ["view", "manage"]]],
-  warehouse: [["catalog", "کاتالوگ و کارت کالا", ["view"]], ["stock", "موجودی کالا", ["view", "manage"]], ["issues", "درخواست و صدور کالا", ["view", "manage", "approve"]], ["receipts", "دریافت کالا و رسید انبار", ["view", "manage"]]],
-  procurement: [["requests", "درخواست‌های خرید", ["view", "manage", "approve"]], ["orders", "سفارش‌های خرید", ["view", "manage", "approve"]], ["suppliers", "تأمین‌کنندگان", ["view", "manage"]], ["crm", "فروش و ارتباط با مشتری", ["view", "manage"]]],
+  warehouse: [["catalog", "کاتالوگ و کارت کالا", ["view"]], ["stock", "موجودی کالا", ["view", "manage"]], ["issues", "درخواست و صدور کالا", ["view", "manage", "approve", "submit"]], ["receipts", "دریافت کالا و رسید انبار", ["view", "manage"]]],
+  assets: [["register", "اموال کارکنان", ["view", "manage", "self"]]],
+  procurement: [["requests", "درخواست‌های خرید", ["view", "manage", "approve", "submit"]], ["orders", "سفارش‌های خرید", ["view", "manage", "approve"]], ["suppliers", "تأمین‌کنندگان", ["view", "manage"]], ["crm", "فروش و ارتباط با مشتری", ["view", "manage"]]],
   development: [["projects", "پروژه‌ها", ["view", "manage", "approve"]], ["gantt", "گانت و نقاط عطف", ["view", "manage"]], ["ideas", "بررسی ایده‌ها", ["view", "approve"]]],
   support: [["catalog", "کاتالوگ خدمات", ["view"]], ["tickets", "تیکت‌های خدمات", ["view", "manage", "close"]], ["requests", "درخواست خدمات شخصی", ["self"]], ["sla", "تعهد پاسخ‌گویی", ["view", "manage"]]],
 };
@@ -48,6 +50,7 @@ const keys = (subsystemKey: string, predicate: (key: string) => boolean = () => 
 export type GroupTemplate = { id: string; name: string; subsystemKey: string; description: string; permissionKeys: string[] };
 const template = (id: string, name: string, subsystemKey: string, description: string, permissionKeys: string[]): GroupTemplate => ({id, name, subsystemKey, description, permissionKeys});
 export const GROUP_TEMPLATES: GroupTemplate[] = [
+  template("assets-employee", "اموال من", "assets", "مشاهدهٔ اموال تحویلی به خود", ["assets:register:self"]),
   template("core-employee", "کاربر پرتال", "core", "کارتابل شخصی، ثبت درخواست و ایده، اطلاعیه‌ها و دفترچه سازمان", keys("core", k => !k.endsWith(":manage") && !k.endsWith(":review"))),
   ...SUBSYSTEMS.map(s => template(`${s.key}-manager`, `مدیر ${s.title}`, s.key, "دسترسی عملیاتی کامل این زیرسیستم؛ بدون اختیار مدیریت حساب‌ها", keys(s.key))),
   ...SUBSYSTEMS.map(s => template(`${s.key}-viewer`, `مشاهده‌گر ${s.title}`, s.key, "فقط مشاهده بخش‌های این زیرسیستم", keys(s.key, k => k.endsWith(":view")))),
@@ -78,6 +81,8 @@ export const GROUP_TEMPLATES: GroupTemplate[] = [
   template("hse-environment", "سرپرست محیط‌زیست", "hse", "محیط‌زیست، EIA و اقدامات اصلاحی محیط‌زیست", keys("hse", k => k.startsWith("hse:environment") || k === "hse:dashboard:view" || k === "hse:safety:view")),
   template("hse-worker", "پرسنل HSE", "hse", "گزارش مخاطره و پرسشنامه‌های شخصی", keys("hse", k => k.endsWith(":self") || k === "hse:safety:view")),
   template("shiftwise-employee", "پرسنل شیفت", "shiftwise", "شیفت و درخواست‌های شخصی", keys("shiftwise", k => k.endsWith(":self"))),
+  template("procurement-requester", "درخواست‌کنندهٔ خرید", "procurement", "ثبت و پیگیری درخواست‌های خود", ["procurement:requests:submit"]),
+  template("warehouse-requester", "درخواست‌کنندهٔ کالا", "warehouse", "کاتالوگ و درخواست‌های کالای خود", ["warehouse:catalog:view", "warehouse:issues:submit"]),
   template("warehouse-employee", "کاربر کاتالوگ انبار", "warehouse", "مشاهده کاتالوگ کالا مطابق دسترسی پرسنل در نمونه", ["warehouse:catalog:view"]),
   template("support-employee", "متقاضی خدمات", "support", "کاتالوگ و درخواست خدمات شخصی", ["support:catalog:view", "support:requests:self"]),
 ];

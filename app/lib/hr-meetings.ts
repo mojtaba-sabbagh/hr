@@ -144,8 +144,15 @@ export async function listMinutes(actor: SessionUser, query = new URLSearchParam
     ],
   };
   const filter = query.get("filter") ?? "all";
+  const meetingId = query.get("meetingId");
+  const meetings = await prisma.hrMeeting.findMany({
+    where: {...tenant, ...(meetingId ? {id: meetingId} : {active: true})},
+    select: {id: true, name: true, period: true, active: true, members: {where: {active: true}, include: {employee: {select: employeeOption}}}},
+    orderBy: {name: "asc"},
+  });
+  if (meetingId && (!canAll || !meetings.length)) throw new AccessError(404, "جلسه یافت نشد یا خارج از دسترسی شماست");
   const rows = await prisma.hrMeetingMinute.findMany({
-    where: {...tenant, ...(mine ?? {}), ...(filter === "awaiting" ? {status: "FOR_SIGNATURE"} : filter === "signed" ? {status: "SIGNED"} : {})},
+    where: {...tenant, ...(mine ?? {}), ...(meetingId ? {meetingId} : {}), ...(filter === "awaiting" ? {status: "FOR_SIGNATURE"} : filter === "signed" ? {status: "SIGNED"} : {})},
     include: minuteInclude, orderBy: [{date: "desc"}, {createdAt: "desc"}], take: 300,
   });
   const canManage = canAny(actor, manageKeys);
@@ -168,7 +175,7 @@ export async function listMinutes(actor: SessionUser, query = new URLSearchParam
       };
     }),
     employees: canManage ? await prisma.hrEmployee.findMany({where: {active: true, ...tenant}, select: employeeOption, orderBy: {name: "asc"}, take: 1000}) : [],
-    meetings: await prisma.hrMeeting.findMany({where: {active: true, ...tenant}, select: {id: true, name: true, members: {where: {active: true}, include: {employee: {select: employeeOption}}}} , orderBy: {name: "asc"}}),
+    meetings,
     statuses: MINUTE_STATUS,
     canManage,
     canSign: canAny(actor, ["hr:minutes:sign"]),

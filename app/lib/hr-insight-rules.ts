@@ -27,6 +27,7 @@ export type InsightFactIncident = {id: string; employeeId: string; employeeName:
 
 export type InsightFacts = {
   today: string;
+  operations?: Insight[];
   contracts: InsightFactContract[];
   decrees: InsightFactDecree[];
   requests: InsightFactRequest[];
@@ -271,10 +272,10 @@ export const INSIGHT_RULES: InsightRule[] = [
   // Each entry names the subsystem it waits for. Nothing below is evaluated;
   // the day the module exists, `available` flips and the rule starts working.
   {key: "open-shift-place", title: "جای خالی شیفت", description: "جای خالی گزارش‌شدهٔ روستر ShiftWise (پس از اتصال §4.1).", audienceKeys: ["hr:shifts:view", "hr:shifts:manage"], requires: "shiftwise", available: false, evaluate: () => []},
-  {key: "inventory-below-threshold", title: "موجودی زیر حد سفارش", description: "پس از فعال‌سازی انبار؛ آستانه از ضریب پلن می‌آید.", audienceKeys: ["hr:productivity:view"], requires: "warehouse", available: false, evaluate: () => []},
-  {key: "preventive-maintenance-due", title: "سرویس پیشگیرانهٔ سررسید", description: "پس از فعال‌سازی نگهداری؛ دوره از ضریب پلن کوتاه می‌شود.", audienceKeys: ["hr:productivity:view"], requires: "maintenance", available: false, evaluate: () => []},
-  {key: "asset-inspection-class-a", title: "بازرسی دارایی کلاس A", description: "پس از فعال‌سازی نگهداری؛ ۲ بازرسی، ۴ در پلن فوق‌العاده.", audienceKeys: ["hr:productivity:view"], requires: "maintenance", available: false, evaluate: () => []},
-  {key: "purchase-coverage", title: "پوشش خرید اقلام", description: "پس از فعال‌سازی تدارکات؛ ۴ قلم کم‌پوشش برای AI-12.", audienceKeys: ["hr:productivity:view"], requires: "procurement", available: false, evaluate: () => []},
+  {key: "inventory-below-threshold", title: "موجودی زیر حد سفارش", description: "موجودی زیر حد سفارش در شرکت فعال", audienceKeys: ["warehouse:stock:view", "warehouse:stock:manage", "warehouse:stock:approve"], requires: "warehouse", available: true, evaluate: facts => (facts.operations ?? []).filter(row => row.rule === "inventory-below-threshold")},
+  {key: "preventive-maintenance-due", title: "سرویس پیشگیرانهٔ سررسید", description: "سرویس پیشگیرانهٔ سررسید در شرکت فعال", audienceKeys: ["maintenance:preventive:view", "maintenance:preventive:manage", "maintenance:preventive:approve"], requires: "maintenance", available: true, evaluate: facts => (facts.operations ?? []).filter(row => row.rule === "preventive-maintenance-due")},
+  {key: "asset-inspection-class-a", title: "بازرسی تجهیز حیاتی", description: "بازرسی تجهیز حیاتی در شرکت فعال", audienceKeys: ["maintenance:work-orders:view", "maintenance:work-orders:manage", "maintenance:work-orders:approve"], requires: "maintenance", available: true, evaluate: facts => (facts.operations ?? []).filter(row => row.rule === "asset-inspection-class-a")},
+  {key: "purchase-coverage", title: "پوشش خرید اقلام", description: "پوشش خرید اقلام در شرکت فعال", audienceKeys: ["procurement:orders:view", "procurement:orders:manage", "procurement:orders:approve"], requires: "procurement", available: true, evaluate: facts => (facts.operations ?? []).filter(row => row.rule === "purchase-coverage")},
   {key: "certificate-expiring", title: "گواهی‌نامهٔ در حال انقضا", description: "پس از زیرسیستم آموزش (AI-03) و جدول گواهی‌نامه.", audienceKeys: ["hr:people:view", "hse:training:view", "hse:training:manage"], requires: "training", available: false, evaluate: () => []},
 ];
 
