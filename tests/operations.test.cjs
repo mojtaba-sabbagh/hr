@@ -158,9 +158,17 @@ test("an explicit over-limit approval reserves budget; partial receipts convert 
       }),
     );
   assert.deepEqual(await totals(), { spent: 0n, committed: 600n, balance: -100n });
+  const {officeAction}=require("../app/lib/office/actions.ts");
+  const configure=(action,body)=>officeAction(root,"accounting",A.id,{action,token:randomUUID(),...body});
+  await configure("year",{label:"سال آزمایشی",start:day(-30),end:day(365-31)});
+  for(const code of ["inventory","supplier"])await configure("account",{code,name:code});
+  await configure("sourceRule",{source:"warehouse",event:"receipt",debitCode:"inventory",creditCode:"supplier"});
   const token = randomUUID();
   const m = await post(warehouse, "warehouse", "receipt", { ...receipt, token });
   assert.equal((await post(warehouse, "warehouse", "receipt", { ...receipt, token })).id, m.id);
+  const entry=await db.journal.findUniqueOrThrow({where:{companyId_source_reference_event:{companyId:A.id,source:"warehouse",reference:m.id,event:"receipt"}},include:{lines:{orderBy:{position:"asc"}}}});
+  assert.equal(entry.status,"DRAFT");
+  assert.deepEqual(entry.lines.map(line=>[line.debit,line.credit]),[[400n,0n],[0n,400n]]);
   const posts = await Promise.allSettled(
     [1, 2].map(() => post(warehouse, "warehouse", "receipt", { ...receipt, quantity: 2 })),
   );
@@ -308,6 +316,67 @@ test("property rejects cross-company and inactive recipients and cannot be edite
   assert.equal(results.filter(r => r.status === "fulfilled").length, 1);
   assert.equal(results.find(r => r.status === "rejected").reason.status, 409);
   assert.equal((await db.employeeAsset.findUniqueOrThrow({where: {id: created.id}})).version, 2);
+});
+
+test("exit assets follow contract, rehire and workflow evidence; return and transfer remain scoped and auditable", async () => {
+  const {smartBoard,reviewFinding}=require("../app/lib/smart/inbox.ts");
+  const {installTemplate}=require("../app/lib/workflow/template-service.ts");
+  const staff=await assetEmployee(A.id,"exit-worker",finance.id);
+  const next=await assetEmployee(A.id,"current-worker");
+  const viewer={...buyer,subsystemKeys:["assets"],permissions:["assets:register:view"]};
+  const manager={...viewer,permissions:["assets:register:manage"]};
+  const board=()=>smartBoard(viewer,A.id);
+  const register=(number)=>post(root,"assets","registerAsset",{number,category:"IT",name:"رایانه",employeeId:staff.id});
+  const first=await register("R-100"),second=await register("R-101");
+  assert.equal((await board()).findings.length,0);
+  const old=await db.hrContract.create({data:{companyId:A.id,employeeId:staff.id,kind:"ANNUAL",startDate:new Date("2022-01-01"),endDate:new Date("2022-12-31")}});
+  const expired=await board();
+  assert.deepEqual(expired.scopes,["assets"]);
+  assert.deepEqual(expired.periods,[]);
+  assert.equal(expired.findings.length,2);
+  assert.ok(expired.findings.every(f=>f.level==="check"&&f.evidence.includes("سررسید قرارداد")));
+  await db.hrContract.update({where:{id:old.id},data:{status:"ENDED"}});
+  assert.ok((await board()).findings.every(f=>f.evidence.includes("پایان قرارداد")));
+  await db.hrContract.create({data:{companyId:A.id,employeeId:staff.id,kind:"PERMANENT",startDate:new Date("2023-01-01")}});
+  assert.equal((await board()).findings.length,0);
+  const form=await installTemplate(root,A.id,"resignation");
+  const flow=await db.builderWorkflow.findUniqueOrThrow({where:{formId:form.id}});
+  const version=await db.workflowVersion.create({data:{workflowId:flow.id,version:1,config:flow.config,formSchema:{},formTitle:"تسویه",formCode:"TPL-RESIGNATION",publishedBy:root.id}});
+  const request=await db.workflowInstance.create({data:{companyId:A.id,versionId:version.id,title:"پایان همکاری",category:"hr",submittedBy:finance.id,submitterName:"exit-worker",payload:{},parameters:{}}});
+  assert.equal((await board()).findings.length,0);
+  const task=await db.workflowTask.create({data:{instanceId:request.id,nodeId:"settle",label:"تسویه اموال",round:1,assignedTo:buyer.id,dueAt:new Date()}});
+  assert.ok((await board()).findings.every(f=>f.evidence.includes("درخواست شمارهٔ")));
+  await db.workflowInstance.update({where:{id:request.id},data:{status:"rejected"}});
+  assert.equal((await board()).findings.length,0);
+  await db.workflowTask.update({where:{id:task.id},data:{status:"done"}});
+  await db.workflowInstance.update({where:{id:request.id},data:{status:"running"}});
+  assert.equal((await board()).findings.length,2);
+  await db.workflowInstance.update({where:{id:request.id},data:{status:"completed",completedAt:new Date("2022-06-01")}});
+  assert.equal((await board()).findings.length,0);
+  await db.workflowInstance.update({where:{id:request.id},data:{completedAt:new Date()}});
+  const active=await board();
+  assert.equal(active.findings.length,2);
+  assert.equal((await smartBoard(root,B.id)).findings.filter(f=>f.scope==="assets").length,0);
+  const finding=active.findings.find(f=>f.title.includes("R-100"));
+  const vote={key:finding.key,fingerprint:finding.fingerprint,useful:true};
+  await denied(()=>reviewFinding(viewer,A.id,vote),403);
+  await reviewFinding(manager,A.id,vote);
+  const input={operation:"returnAsset",id:first.id,version:1,token:randomUUID()};
+  await denied(()=>service.postOperation(viewer,A.id,"assets",input),403);
+  await service.postOperation(manager,A.id,"assets",input);
+  await service.postOperation(manager,A.id,"assets",input);
+  await denied(()=>post(manager,"assets","returnAsset",{id:first.id,version:2}),409);
+  await denied(()=>reviewFinding(manager,A.id,vote),409);
+  const stored=await db.employeeAsset.findUniqueOrThrow({where:{id:first.id}});
+  assert.deepEqual([stored.number,stored.category,stored.employeeId,stored.version],["R-100","IT",null,2]);
+  await post(manager,"assets","transferAsset",{id:first.id,version:2,employeeId:next.id});
+  await post(manager,"assets","transferAsset",{id:second.id,version:1,employeeId:next.id});
+  const cleared=await board();
+  assert.deepEqual(cleared.findings,[]);
+  assert.equal(cleared.metrics.cleared,2);
+  assert.equal(cleared.metrics.verified,1);
+  await db.hrEmployee.update({where:{id:next.id},data:{active:false}});
+  assert.ok((await board()).findings.some(f=>f.title.includes("R-101")&&f.level==="check"));
 });
 
 test("quote ranking and supply coverage use the documented inputs", () => {

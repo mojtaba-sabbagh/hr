@@ -210,8 +210,8 @@ export default function HsePortal({session, requestedView}: {session: SessionUse
             const count = matrixCounts.get(`${probabilityCol}:${severityRow}`) ?? 0;
             const tone = LEVEL_TONE[level];
             return <div key={`${probabilityCol}:${severityRow}`} title={`احتمال ${probabilityCol} × شدت ${severityRow} = ${score}`} style={{background: tone.bg, color: tone.ink, borderRadius: 9, padding: "12px 6px", textAlign: "center", border: count ? `2px solid ${tone.ink}` : "2px solid transparent"}}>
-              <strong style={{display: "block", fontSize: "0.9375rem"}}>{fa(score)}</strong>
-              <small style={{fontSize: "0.875rem", opacity: 0.85}}>{count ? `${fa(count)} مخاطره` : levelTitle(level)}</small>
+              <strong style={{display: "block", fontSize: "var(--text-body)"}}>{fa(score)}</strong>
+              <small style={{fontSize: "var(--text-caption)", opacity: 0.85}}>{count ? `${fa(count)} مخاطره` : levelTitle(level)}</small>
             </div>;
           }))}
         </div>
@@ -237,7 +237,7 @@ export default function HsePortal({session, requestedView}: {session: SessionUse
       </div>
       <section className="panel" style={{marginTop: 20}}><div className="section-heading"><h2>حوادث یک سال گذشته به تفکیک سطح</h2><span>{fa(board.incidents.last365)} حادثه</span></div>
         <div style={{display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, padding: "0 20px 20px"}}>
-          {LEVEL_ORDER.map(level => <div key={level} style={{border: "1px solid var(--line)", borderRadius: 11, padding: "14px 16px"}}><Level level={level}/><strong style={{display: "block", fontSize: "1.5rem", marginTop: 8}}>{fa(board.incidents.byLevel[level] ?? 0)}</strong></div>)}
+          {LEVEL_ORDER.map(level => <div key={level} style={{border: "1px solid var(--line)", borderRadius: 11, padding: "14px 16px"}}><Level level={level}/><strong style={{display: "block", fontSize: "var(--text-title)", marginTop: 8}}>{fa(board.incidents.byLevel[level] ?? 0)}</strong></div>)}
         </div>
       </section>
     </>;

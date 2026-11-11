@@ -14,6 +14,9 @@ import { View } from "../lib/operations/views";
 import OperationsPortal from "../components/operations-portal";
 import EmployeeAssets from "../components/employee-assets";
 import { employeeAssetBoard } from "../lib/operations/employee-assets";
+import { officeBoard } from "../lib/office/board";
+import { isOffice, modules } from "../lib/office/shared";
+import OfficePortal from "../components/office-portal";
 
 export const dynamic = "force-dynamic";
 export default async function OperationPage({
@@ -21,19 +24,24 @@ export default async function OperationPage({
   searchParams,
 }: {
   params: { module: string };
-  searchParams: { company?: string };
+  searchParams: { company?: string; period?: string; section?:string; record?:string; q?:string };
 }) {
   const mod = params.module;
-  if (!isOperationModule(mod)) notFound();
+  if (!isOperationModule(mod) && !isOffice(mod)) notFound();
   const actor = await getSession();
   if (!actor) redirect("/login");
   try {
     const companies = (await listCompanies(actor)).filter((c) => c.active);
     const companyId = searchParams.company ?? companies[0]?.id ?? "";
     if (companyId && !companies.some((c) => c.id === companyId)) throw new AccessError(403, "دسترسی به این شرکت ندارید");
+    if (isOffice(mod)) {
+      const company=companies.find(c=>c.id===companyId);
+      const board=await officeBoard(actor,mod,company,searchParams.period||"");
+      return <OfficePortal key={JSON.stringify([mod,companyId,board?.selected,searchParams.section,searchParams.record,searchParams.q])} actor={actor} module={mod} title={modules[mod]} companies={companies} companyId={companyId} board={board} initialSection={searchParams.section} initialRecord={searchParams.record} initialQuery={searchParams.q}/>;
+    }
     if (mod === "assets") {
       const board = await employeeAssetBoard(prisma, actor, companyId);
-      return <EmployeeAssets key={companyId} session={actor} companies={companies} companyId={companyId} board={board}/>;
+      return <EmployeeAssets key={companyId+(searchParams.record||"")} session={actor} companies={companies} companyId={companyId} board={board} record={searchParams.record}/>;
     }
     await requireModule(prisma, actor, mod);
     const view = new View(actor, mod);

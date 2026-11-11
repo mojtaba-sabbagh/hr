@@ -11,6 +11,9 @@ export const SUBSYSTEMS = [
   { key: "finance", title: "مالی و بودجه", description: "بودجه، فاکتورها، پرداخت‌ها و هزینه‌ها", enabled: true, dependencies: ["core"] },
   { key: "warehouse", title: "انبار و لجستیک", description: "موجودی، درخواست کالا و رسید انبار", enabled: true, dependencies: ["core"] },
   { key: "assets", title: "اموال", description: "ثبت اموال، تحویل به کارکنان و انتقال بین افراد", enabled: true, dependencies: ["core", "hr"] },
+  { key: "attendance", title: "حضور و غیاب", description: "تردد دستگاه، مغایرت‌ها و تأیید کارکرد دوره", enabled: true, dependencies: ["core", "hr"] },
+  { key: "payroll", title: "حقوق و دستمزد", description: "محاسبهٔ حقوق، کسورات و انتشار فیش", enabled: true, dependencies: ["hr", "attendance"] },
+  { key: "accounting", title: "حسابداری", description: "کارتابل اسناد سازمان، دفاتر و تراز آزمایشی", enabled: true, dependencies: ["core"] },
   { key: "procurement", title: "سفارشات و تدارکات", description: "خرید، تأمین‌کنندگان و سفارش‌ها", enabled: true, dependencies: ["core"] },
   { key: "development", title: "توسعه و پروژه‌ها", description: "پروژه‌ها، گانت و بررسی ایده‌ها", enabled: false, dependencies: ["core"] },
   { key: "support", title: "خدمات پشتیبانی", description: "خدمات، تیکت‌ها و تعهد پاسخ‌گویی", enabled: false, dependencies: ["core"] },
@@ -34,6 +37,9 @@ const resources: Record<string, Resource[]> = {
   finance: [["budgets", "بودجه‌ها", ["view", "manage", "approve"]], ["invoices", "فاکتورها", ["view", "manage", "approve"]], ["payments", "پرداخت‌ها", ["view", "manage", "approve"]], ["expenses", "هزینه‌ها", ["view", "manage", "approve"]], ["cash", "جریان نقدی و تحلیل هزینه", ["view", "export"]], ["authority", "ماتریس اختیارات مالی", ["view", "manage"]]],
   warehouse: [["catalog", "کاتالوگ و کارت کالا", ["view"]], ["stock", "موجودی کالا", ["view", "manage"]], ["issues", "درخواست و صدور کالا", ["view", "manage", "approve", "submit"]], ["receipts", "دریافت کالا و رسید انبار", ["view", "manage"]]],
   assets: [["register", "اموال کارکنان", ["view", "manage", "self"]]],
+  attendance: [["records", "کارکرد و تردد", ["view", "manage", "approve", "self"]]],
+  payroll: [["runs", "لیست حقوق", ["view", "manage", "approve", "self"]]],
+  accounting: [["ledger", "اسناد حسابداری", ["view", "manage", "approve"]]],
   procurement: [["requests", "درخواست‌های خرید", ["view", "manage", "approve", "submit"]], ["orders", "سفارش‌های خرید", ["view", "manage", "approve"]], ["suppliers", "تأمین‌کنندگان", ["view", "manage"]], ["crm", "فروش و ارتباط با مشتری", ["view", "manage"]]],
   development: [["projects", "پروژه‌ها", ["view", "manage", "approve"]], ["gantt", "گانت و نقاط عطف", ["view", "manage"]], ["ideas", "بررسی ایده‌ها", ["view", "approve"]]],
   support: [["catalog", "کاتالوگ خدمات", ["view"]], ["tickets", "تیکت‌های خدمات", ["view", "manage", "close"]], ["requests", "درخواست خدمات شخصی", ["self"]], ["sla", "تعهد پاسخ‌گویی", ["view", "manage"]]],
@@ -51,6 +57,8 @@ export type GroupTemplate = { id: string; name: string; subsystemKey: string; de
 const template = (id: string, name: string, subsystemKey: string, description: string, permissionKeys: string[]): GroupTemplate => ({id, name, subsystemKey, description, permissionKeys});
 export const GROUP_TEMPLATES: GroupTemplate[] = [
   template("assets-employee", "اموال من", "assets", "مشاهدهٔ اموال تحویلی به خود", ["assets:register:self"]),
+  template("payroll-employee", "فیش حقوق من", "payroll", "مشاهدهٔ فیش‌های قطعی خود", ["payroll:runs:self"]),
+  template("attendance-employee", "کارکرد من", "attendance", "مشاهدهٔ کارکرد خود", ["attendance:records:self"]),
   template("core-employee", "کاربر پرتال", "core", "کارتابل شخصی، ثبت درخواست و ایده، اطلاعیه‌ها و دفترچه سازمان", keys("core", k => !k.endsWith(":manage") && !k.endsWith(":review"))),
   ...SUBSYSTEMS.map(s => template(`${s.key}-manager`, `مدیر ${s.title}`, s.key, "دسترسی عملیاتی کامل این زیرسیستم؛ بدون اختیار مدیریت حساب‌ها", keys(s.key))),
   ...SUBSYSTEMS.map(s => template(`${s.key}-viewer`, `مشاهده‌گر ${s.title}`, s.key, "فقط مشاهده بخش‌های این زیرسیستم", keys(s.key, k => k.endsWith(":view")))),

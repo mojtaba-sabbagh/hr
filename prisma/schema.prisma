@@ -187,6 +187,9 @@ model CoreIdeaVote {
 }
 
 model HrEmployee {
+  clockMaps ClockMap[]
+  workMembers WorkMember[]
+  paySlips PaySlip[]
   assignedAssets EmployeeAsset[]
   @@unique([companyId, id])
   id            String   @id @default(cuid())
@@ -1342,6 +1345,16 @@ model HseCapa {
 
 // Company workspaces are isolated from the legacy, installation-wide HR records.
 model Company {
+  smartReviews SmartReview[]
+  clockEvents ClockEvent[]
+  clockCursors ClockCursor[]
+  workPeriods WorkPeriod[]
+  payPolicies PayPolicy[]
+  fiscalYears FiscalYear[]
+  ledgerAccounts LedgerAccount[]
+  payrollPostingMap PayrollPostingMap?
+  ledgerRules LedgerRule[]
+  journals Journal[]
   employeeAssets EmployeeAsset[]
   id          String @id @default(cuid())
   slug        String @unique
@@ -1782,12 +1795,231 @@ model EmployeeAsset {
   number     String
   name       String
   category   String
-  employeeId String
-  employee   HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employeeId String?
+  employee   HrEmployee? @relation(fields: [companyId, employeeId], references: [companyId, id], onDelete: Restrict, onUpdate: Restrict)
   version    Int        @default(1)
 
   @@unique([companyId, number])
   @@index([companyId, employeeId])
+}
+
+model SmartReview {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+  scope       String
+  periodId    String?
+  findingKey  String
+  fingerprint String
+  useful      Boolean
+  actorId     String
+  updatedAt   DateTime @updatedAt
+  @@unique([companyId, findingKey, fingerprint])
+  @@index([companyId, scope, periodId])
+}
+
+model ClockEvent {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  source String
+  externalId String
+  workerCode String
+  occurredAt DateTime
+  direction String
+  @@unique([companyId, source, externalId])
+  @@index([companyId, occurredAt])
+}
+model ClockMap {
+  id String @id @default(cuid())
+  companyId String
+  source String
+  workerCode String
+  employeeId String
+  employee HrEmployee @relation(fields: [companyId, employeeId], references: [companyId, id], onUpdate: Restrict)
+  @@unique([companyId, source, workerCode])
+}
+model ClockCursor {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  source String
+  cursor String
+  updatedAt DateTime @updatedAt
+  @@unique([companyId, source])
+}
+model WorkPeriod {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  label String
+  start DateTime @db.Date
+  end DateTime @db.Date
+  status String @default("OPEN")
+  approvedAt DateTime?
+  approvedBy String?
+  staff WorkMember[]
+  run PayRun?
+  @@unique([companyId, start])
+}
+model WorkMember {
+  id String @id @default(cuid())
+  periodId String
+  period WorkPeriod @relation(fields: [periodId], references: [id])
+  employeeId String
+  employee HrEmployee @relation(fields: [employeeId], references: [id])
+  snapshot Json?
+  fixes WorkFix[]
+  adjustments PayAdjustment[]
+  @@unique([periodId, employeeId])
+}
+model WorkFix {
+  id String @id @default(cuid())
+  memberId String
+  member WorkMember @relation(fields: [memberId], references: [id])
+  date DateTime @db.Date
+  regular Int
+  overtime Int
+  leave Int
+  unpaidLeave Int @default(0)
+  mission Int
+  scheduled Int
+  reason String
+  actorId String
+  @@unique([memberId, date])
+}
+model PayPolicy {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  effective DateTime @db.Date
+  monthlyMinutes Int
+  overtimePercent Int
+  insuranceBP Int
+  employerBP Int
+  taxBands Json
+  @@unique([companyId, effective])
+}
+model PayRun {
+  id String @id @default(cuid())
+  periodId String @unique
+  period WorkPeriod @relation(fields: [periodId], references: [id])
+  status String @default("DRAFT")
+  revision Int @default(1)
+  policy Json
+  slips PaySlip[]
+  finalizedAt DateTime?
+  finalizedBy String?
+}
+model PaySlip {
+  id String @id @default(cuid())
+  runId String
+  run PayRun @relation(fields: [runId], references: [id])
+  employeeId String
+  employee HrEmployee @relation(fields: [employeeId], references: [id])
+  details Json
+  gross BigInt
+  deductions BigInt
+  net BigInt
+  @@unique([runId, employeeId])
+}
+model PayAdjustment {
+  id String @id @default(cuid())
+  periodId String
+  employeeId String
+  member WorkMember @relation(fields: [periodId, employeeId], references: [periodId, employeeId])
+  label String
+  kind String
+  amount BigInt
+  taxable Boolean
+  insurable Boolean
+}
+model FiscalYear {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  label String
+  start DateTime @db.Date
+  end DateTime @db.Date
+  closed Boolean @default(false)
+  nextNumber Int @default(1)
+  entries Journal[]
+  periods LedgerPeriod[]
+  @@unique([companyId, start])
+}
+model LedgerPeriod {
+  id String @id @default(cuid())
+  yearId String
+  year FiscalYear @relation(fields: [yearId], references: [id])
+  label String
+  start DateTime @db.Date
+  end DateTime @db.Date
+  closed Boolean @default(false)
+  @@unique([yearId, start])
+}
+model LedgerAccount {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  code String
+  name String
+  parentId String?
+  parent LedgerAccount? @relation("LedgerTree", fields: [parentId], references: [id])
+  children LedgerAccount[] @relation("LedgerTree")
+  posting Boolean @default(true)
+  lines JournalLine[]
+  @@unique([companyId, code])
+}
+model LedgerRule {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  source String
+  event String
+  debitCode String
+  creditCode String
+  @@unique([companyId, source, event])
+}
+model PayrollPostingMap {
+  companyId String @id
+  company Company @relation(fields: [companyId], references: [id])
+  accounts Json
+}
+model Journal {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id])
+  yearId String
+  year FiscalYear @relation(fields: [yearId], references: [id])
+  date DateTime @db.Date
+  source String
+  reference String
+  event String
+  sourceHash String?
+  description String
+  evidence String @default("")
+  status String @default("DRAFT")
+  number Int?
+  revision Int @default(1)
+  postedAt DateTime?
+  postedBy String?
+  lines JournalLine[]
+  @@unique([companyId, source, reference, event])
+  @@unique([yearId, number])
+  @@index([companyId, date])
+}
+model JournalLine {
+  id String @id @default(cuid())
+  journalId String
+  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  accountId String
+  account LedgerAccount @relation(fields: [accountId], references: [id])
+  debit BigInt
+  credit BigInt
+  center String
+  memo String
+  position Int
+  @@unique([journalId, position])
 }
 
 model OpsAsset {

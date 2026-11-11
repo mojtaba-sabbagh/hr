@@ -14,6 +14,8 @@
     "typecheck": "tsc --noEmit",
     "ops:monitor": "ts-node --project prisma/tsconfig.seed.json scripts/operations-monitor.ts",
     "test:operations": "node --test tests/operations.test.cjs",
+    "test:office": "node --test tests/office.test.cjs",
+    "test:office:browser": "node --test tests/office-browser.test.cjs",
     "seed:prototype": "ts-node --project prisma/tsconfig.seed.json prisma/seed-prototype.ts",
     "backfill:org": "ts-node --project prisma/tsconfig.seed.json prisma/backfill-org-chart.ts",
     "backfill:hr-company": "ts-node --project prisma/tsconfig.seed.json prisma/backfill-hr-company.ts",

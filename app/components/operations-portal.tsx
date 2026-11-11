@@ -139,7 +139,7 @@ export default function OperationsPortal({
   return (
     <AppShell session={session} active={mod} title={title} section={title} items={nav}>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-black">{title}</h1>
+        <h1 className="text-title font-extrabold">{title}</h1>
         {companies.length > 0 && (
           <label className="flex gap-2 items-center">
             شرکت
@@ -192,8 +192,8 @@ export default function OperationsPortal({
             </div>
             {s.rows.length ? (
               <div className="overflow-x-auto">
-                <table className="w-full text-right text-sm">
-                  <thead>
+                <table className="w-full text-right text-table">
+                  <thead className="text-sm">
                     <tr>
                       {s.columns.map((c) => (
                         <th className="whitespace-nowrap p-3" key={c}>

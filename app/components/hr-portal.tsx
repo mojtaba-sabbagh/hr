@@ -393,8 +393,14 @@ export default function HrPortal({session, requestedView, meetingId}: {session: 
   // The portal entry point the flat navigation used to carry, kept at the end of خانه.
   const homeSection = sections.find(item => item.id === "home");
   const portalItem: NavItem = {id: "portal", label: "همهٔ زیرسیستم‌ها", href: "/", icon: LayoutDashboard};
-  if (homeSection) homeSection.items = [...homeSection.items, portalItem];
-  else sections.unshift({id: "home", title: "خانه", icon: GROUP_ICONS.home, items: [portalItem]});
+  const related: NavItem[] = [
+    {id:"attendance",resource:"records",label:"تردد و کارکرد دوره",icon:Clock3},
+    {id:"payroll",resource:"runs",label:"حقوق و دستمزد",icon:FileText},
+    {id:"accounting",resource:"ledger",label:"حسابداری",icon:Building2},
+  ].filter(item=>["view","manage","approve","self"].some(verb=>can(item.id+":"+item.resource+":"+verb)))
+    .map(item=>({id:"module-"+item.id,label:item.label,icon:item.icon,href:"/"+item.id}));
+  if (homeSection) homeSection.items = [...homeSection.items, ...related, portalItem];
+  else sections.unshift({id: "home", title: "خانه", icon: GROUP_ICONS.home, items: [...related,portalItem]});
   const paletteViews: PaletteView[] = permitted.map(item => ({id: item.id, title: item.title, subtitle: item.subtitle, href: hrHref(item.id), icon: item.icon}));
 
   function renderTable(): ReactNode {

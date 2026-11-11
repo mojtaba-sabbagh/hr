@@ -1,5 +1,6 @@
 import { AccessError, hasPermission, textField } from "../access-policy";
-import { companyAccess, type Tx } from "../company-service";
+import { audit, companyAccess, type Tx } from "../company-service";
+import { exitSignals } from "../smart/offboarding";
 import type { SessionUser } from "../session-types";
 import { normalizeDigits } from "../workflow/validation";
 import { check, existing, numeric, requireModule, type Body } from "./common";
@@ -26,9 +27,9 @@ export async function employeeAssetBoard(tx: Tx, actor: SessionUser, companyId: 
 }
 
 export type EmployeeAssetBoard = NonNullable<Awaited<ReturnType<typeof employeeAssetBoard>>>;
-type AssetAction = "registerAsset" | "transferAsset" | "removeAsset";
+type AssetAction = "registerAsset" | "transferAsset" | "removeAsset" | "returnAsset";
 
-export async function changeEmployeeAsset(tx: Tx, companyId: string, action: AssetAction, b: Body) {
+export async function changeEmployeeAsset(tx: Tx, companyId: string, action: AssetAction, b: Body, actor:SessionUser) {
   async function recipient() {
     const id = textField(b.employeeId, "تحویل‌گیرنده");
     const employee = await tx.hrEmployee.findFirst({where: {id, companyId, active: true}, select: employeeFields});
@@ -47,15 +48,24 @@ export async function changeEmployeeAsset(tx: Tx, companyId: string, action: Ass
   }
   const id = textField(b.id, "شناسهٔ مال");
   const version = numeric(b, "version", 1);
-  const row = existing(await tx.employeeAsset.findFirst({where: {id, companyId}, include: {employee: {select: employeeFields}}}));
+  const row = existing(await tx.employeeAsset.findFirst({where: {id, companyId}, include: {employee: {select: {...employeeFields,userId:true}}}}));
   check(row.version === version, "این مال تغییر کرده است؛ صفحه را تازه‌سازی کنید");
-  const source = `${row.name}، شماره ${row.number}، تحویل‌گیرنده ${row.employee.name} (${row.employee.personnelCode})`;
+  const holder = row.employee ? row.employee.name + " (" + row.employee.personnelCode + ")" : "انبار اموال";
+  const source = `${row.name}، شماره ${row.number}، تحویل‌گیرنده ${holder}`;
   if (action === "removeAsset") {
     await tx.employeeAsset.delete({where: {id, companyId, version}});
     return {id, detail: `حذف ${source}`};
   }
+  const exit = row.employee && (await exitSignals(tx,companyId,[row.employee])).get(row.employee.id);
+  if(action==="returnAsset"){
+    check(row.employeeId!==null,"این وسیله قبلاً به انبار اموال تحویل شده است");
+    await tx.employeeAsset.update({where:{id,companyId,version},data:{employeeId:null,version:{increment:1}}});
+    if(exit)await audit(tx,actor,companyId,"assets.exitReturn",id,source+" · "+exit.reference);
+    return {id,detail:"تحویل به انبار اموال · "+source};
+  }
   const owner = await recipient();
   check(owner.id !== row.employeeId, "کارمند مقصد باید با تحویل‌گیرندهٔ فعلی متفاوت باشد");
   await tx.employeeAsset.update({where: {id, companyId, version}, data: {employeeId: owner.id, version: {increment: 1}}});
+  if(exit)await audit(tx,actor,companyId,"assets.exitTransfer",id,source+" ← "+owner.name+" · "+exit.reference);
   return {id, detail: `انتقال ${source} به ${owner.name} (${owner.personnelCode})`};
 }

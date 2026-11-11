@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import {smartHref} from "../lib/smart/access";
 import { ArrowLeftRight, LayoutGrid, PackageCheck, Plus, Search, Trash2, X } from "lucide-react";
 import type { EmployeeAssetBoard } from "../lib/operations/employee-assets";
 import type { SessionUser } from "../lib/session-types";
@@ -10,9 +12,9 @@ import AppShell from "./app-shell";
 
 type Asset = EmployeeAssetBoard["assets"][number];
 type Employee = Asset["employee"];
-type Edit = {action: "registerAsset"} | {action: "transferAsset" | "removeAsset"; asset: Asset};
-const person = (e: Employee) => `${e.name} · ${e.personnelCode}`;
-const titles = {registerAsset: "ثبت مال جدید", transferAsset: "انتقال مال", removeAsset: "حذف مال"};
+type Edit = {action: "registerAsset"} | {action: "transferAsset" | "removeAsset" | "returnAsset"; asset: Asset};
+const person = (e: Employee) => e ? `${e.name} · ${e.personnelCode}` : "انبار اموال";
+const titles = {registerAsset: "ثبت مال جدید", transferAsset: "انتقال مال", removeAsset: "حذف مال",returnAsset:"تحویل به انبار اموال"};
 
 function AssetDialog({edit, board, companyId, employeeId, close, saved}: {
   edit: Edit; board: EmployeeAssetBoard; companyId: string; employeeId: string;
@@ -24,7 +26,8 @@ function AssetDialog({edit, board, companyId, employeeId, close, saved}: {
   const [token] = useState(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, "0")).join(""));
   useEffect(() => {dialog.current?.showModal();}, []);
   const asset = "asset" in edit ? edit.asset : null;
-  const recipients = board.employees.filter(e => e.active && e.id !== asset?.employee.id);
+  const recipients = board.employees.filter(e => e.active && e.id !== asset?.employee?.id);
+  const needsRecipient=edit.action==="registerAsset"||edit.action==="transferAsset";
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -37,7 +40,7 @@ function AssetDialog({edit, board, companyId, employeeId, close, saved}: {
         body: JSON.stringify({...body, operation: edit.action, id: asset?.id, version: asset?.version, token}),
       });
       if (!response.ok) throw new Error((await response.json()).error || "ثبت تغییرات انجام نشد");
-      saved(edit.action === "registerAsset" ? "مال ثبت شد." : edit.action === "transferAsset" ? "مال به کارمند جدید منتقل شد." : "مال حذف شد.");
+      saved(edit.action === "registerAsset" ? "مال ثبت شد." : edit.action === "transferAsset" ? "مال به کارمند جدید منتقل شد." : edit.action==="returnAsset"?"تحویل به انبار اموال ثبت شد.":"مال حذف شد.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "ارتباط برقرار نشد؛ دوباره تلاش کنید");
     } finally {setBusy(false);}
@@ -57,31 +60,31 @@ function AssetDialog({edit, board, companyId, employeeId, close, saved}: {
           <datalist id="asset-categories">{[...new Set(board.assets.map(a => a.category))].sort().map(c => <option key={c} value={c}/>)}</datalist>
         </div>
       </>}
-      {edit.action === "removeAsset" ? <p>این وسیله از فهرست اموال شرکت حذف شود؟</p> :
+      {edit.action === "removeAsset" ? <p>این وسیله از فهرست اموال شرکت حذف شود؟</p> : edit.action==="returnAsset"?<p>تحویل این وسیله از کارمند به انبار اموال ثبت شود؟</p> :
         <label>{asset ? "تحویل‌گیرندهٔ جدید" : "تحویل‌گیرنده"}
           <select name="employeeId" required defaultValue={!asset && recipients.some(e => e.id === employeeId) ? employeeId : ""}>
             <option value="">انتخاب کارمند…</option>
             {recipients.map(e => <option key={e.id} value={e.id}>{person(e)}</option>)}
           </select>
         </label>}
-      {edit.action !== "removeAsset" && !recipients.length && <p>کارمند فعال برای تحویل در این شرکت وجود ندارد.</p>}
+      {needsRecipient && !recipients.length && <p>کارمند فعال برای تحویل در این شرکت وجود ندارد.</p>}
       {error && <p className="feedback error" role="alert">{error}</p>}
       <div className="dialog-actions"><button className={edit.action === "removeAsset" ? "danger-button" : "primary-button"}
-        disabled={busy || (edit.action !== "removeAsset" && !recipients.length)}>{busy ? "در حال ثبت…" : titles[edit.action]}</button>
+        disabled={busy || (needsRecipient && !recipients.length)}>{busy ? "در حال ثبت…" : titles[edit.action]}</button>
         <button type="button" className="secondary-button" disabled={busy} onClick={close}>انصراف</button></div>
     </form>
   </dialog>;
 }
 
-export default function EmployeeAssets({session, companies, companyId, board}: {
-  session: SessionUser; companies: {id: string; name: string}[]; companyId: string; board: EmployeeAssetBoard | null;
+export default function EmployeeAssets({session, companies, companyId, board,record=""}: {
+  session: SessionUser; companies: {id: string; name: string}[]; companyId: string; board: EmployeeAssetBoard | null;record?:string;
 }) {
   const router = useRouter();
   const [employeeId, setEmployeeId] = useState("");
   const [query, setQuery] = useState("");
   const [edit, setEdit] = useState<Edit | null>(null);
   const [message, setMessage] = useState("");
-  const rows = (board?.assets ?? []).filter(a => (!employeeId || a.employee.id === employeeId)
+  const rows = (board?.assets ?? []).filter(a => (!record || a.id===record) && (!employeeId || a.employee?.id === employeeId)
     && normalizeQuery([a.number, a.name, a.category, person(a.employee)].join(" ")).includes(normalizeQuery(query.trim())));
   return <AppShell session={session} active="assets" section="پرتال سازمانی" title="اموال" items={[
     {id: "portal", label: "پرتال سازمانی", href: "/", icon: LayoutGrid},
@@ -94,6 +97,8 @@ export default function EmployeeAssets({session, companies, companyId, board}: {
       </header>
       {!board ? <p>برای مشاهدهٔ اموال، عضویت در یک شرکت فعال لازم است.</p> : <>
         <div className="asset-toolbar">
+          {board.companyWide&&<Link className="secondary-button" href={smartHref(companyId)+"#exit-assets"}>پیگیری اموال پایان همکاری</Link>}
+          {record&&<Link className="text-button" href={"/assets?company="+encodeURIComponent(companyId)}>همهٔ اموال</Link>}
           {board.companyWide && <label>کارمند <select value={employeeId} onChange={e => setEmployeeId(e.target.value)}>
             <option value="">همهٔ کارکنان</option>{board.employees.map(e => <option key={e.id} value={e.id}>{person(e)}</option>)}</select></label>}
           <label className="search-field"><Search size={17}/><input aria-label="جستجو در اموال" placeholder="شماره اموال، نام یا طبقه کالا" value={query} onChange={e => setQuery(e.target.value)}/></label>
@@ -106,9 +111,10 @@ export default function EmployeeAssets({session, companies, companyId, board}: {
           </tr></thead><tbody>{rows.map(a => <tr key={a.id}><td><bdi>{a.number}</bdi></td><td>{a.name}</td><td>{a.category}</td>
             <td>{person(a.employee)}</td>{board.canManage && <td><div className="flex gap-2">
               <button className="secondary-button" onClick={() => setEdit({action: "transferAsset", asset: a})}><ArrowLeftRight size={15}/>انتقال</button>
+              {a.employee&&<button className="secondary-button" onClick={()=>setEdit({action:"returnAsset",asset:a})}>تحویل به انبار</button>}
               <button className="secondary-button" onClick={() => setEdit({action: "removeAsset", asset: a})}><Trash2 size={15}/>حذف</button>
             </div></td>}</tr>)}</tbody></table>
-            : <p className="asset-empty">{employeeId || query ? "مالی با این مشخصات یافت نشد." : "هنوز مالی ثبت نشده است."}</p>}
+            : <p className="asset-empty">{record || employeeId || query ? "مالی با این مشخصات یافت نشد." : "هنوز مالی ثبت نشده است."}</p>}
         </section>
         {edit && <AssetDialog edit={edit} board={board} companyId={companyId} employeeId={employeeId} close={() => setEdit(null)}
           saved={result => {setEdit(null); setMessage(result); router.refresh();}}/>}

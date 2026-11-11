@@ -29,10 +29,12 @@ import {
 import { check, choice, existing, requireModule, type Body } from "./common";
 import type { OperationModule } from "./rules";
 import { changeEmployeeAsset } from "./employee-assets";
+import { journalForOperation } from "../office/operations-journal";
 
 export const actionPermissions = {
   registerAsset: "assets:register:manage",
   transferAsset: "assets:register:manage",
+  returnAsset: "assets:register:manage",
   removeAsset: "assets:register:manage",
   budget: "finance:budgets:manage",
   expense: "finance:expenses:manage",
@@ -79,8 +81,9 @@ async function execute(
   switch (action) {
     case "registerAsset":
     case "transferAsset":
+    case "returnAsset":
     case "removeAsset":
-      return changeEmployeeAsset(tx, companyId, action, b);
+      return changeEmployeeAsset(tx, companyId, action, b,actor);
     case "budget":
       return newBudget(tx, companyId, b);
     case "expense":
@@ -163,6 +166,7 @@ export async function postOperation(actor: SessionUser, companyId: string, mod: 
       permissions,
     );
     const detail = "detail" in result && typeof result.detail === "string" ? result.detail : action;
+    if (action === "expense" || action === "receipt") await journalForOperation(tx, companyId, action, result.id);
     await audit(tx, actor, companyId, "ops." + action, result.id, detail);
     await tx.opsPosting.create({ data: { token, companyId, actorId: actor.id, operation: action, target: result.id } });
     return { id: result.id };

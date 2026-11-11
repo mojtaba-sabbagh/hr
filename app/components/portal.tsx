@@ -8,11 +8,13 @@ import type { LucideIcon } from "lucide-react";
 import type { SessionUser } from "@/app/lib/session-types";
 import { PERMISSIONS, SUBSYSTEMS } from "@/app/lib/access-catalog";
 import { hasPermission } from "@/app/lib/access-policy";
+import { canSeeSmart,smartScopes } from "@/app/lib/smart/access";
 import { groupTitle, meetingWorkspaceHref } from "@/app/lib/hr-navigation";
 import AccessManagement, { type AccessTab } from "./access-management";
 
 type Module = {key: string; title: string; description: string; enabled: boolean; dependencies: readonly string[]};
 const appearance: Record<string, {icon: LucideIcon; color: string}> = {
+  attendance: {icon: CalendarClock, color: "#276354"}, payroll: {icon: Wallet, color: "#305e87"}, accounting: {icon: Layers, color: "#675c8e"},
   assets: {icon: PackageCheck, color: "#0f766e"},
   core: {icon: LayoutDashboard, color: "#058240"}, hr: {icon: Users, color: "#7c3aed"},
   hse: {icon: HardHat, color: "#ea580c"}, shiftwise: {icon: CalendarClock, color: "#0891b2"},
@@ -21,7 +23,7 @@ const appearance: Record<string, {icon: LucideIcon; color: string}> = {
   warehouse: {icon: Boxes, color: "#a16207"}, procurement: {icon: ShoppingCart, color: "#16a34a"},
   development: {icon: Layers, color: "#0f766e"}, support: {icon: Headphones, color: "#6366f1"},
 };
-const workspace: Record<string, string> = {core: "/core", hr: "/hr", hse: "/hse", shiftwise: "/work?category=shiftwise", finance: "/finance", warehouse: "/warehouse", assets: "/assets", procurement: "/procurement", maintenance: "/maintenance", development: "/work?category=development", support: "/work?category=support"};
+const workspace: Record<string, string> = {attendance: "/attendance", payroll: "/payroll", accounting: "/accounting", core: "/core", hr: "/hr", hse: "/hse", shiftwise: "/work?category=shiftwise", finance: "/finance", warehouse: "/warehouse", assets: "/assets", procurement: "/procurement", maintenance: "/maintenance", development: "/work?category=development", support: "/work?category=support"};
 type Panel = "subsystems" | AccessTab;
 
 export default function Portal({session: initialSession}: {session: SessionUser}) {
@@ -96,11 +98,12 @@ export default function Portal({session: initialSession}: {session: SessionUser}
       {!inAdmin && <section className="wf-welcome mb-7"><div><span className="wf-welcome-label">پرتال جامع توسعه و پشتیبانی</span><h2>یک سازمان، یک مسیر روشن.</h2><p>درخواست‌ها را ثبت و پیگیری کنید؛ فرم و مسیر تأیید هر شرکت از فضای کاری همان شرکت در دسترس است.</p><div className="wf-actions"><Link href="/work" className="primary-button"><Building2 size={18}/>فضای کاری و کارتابل</Link>{canManage && <Link href="/admin" className="secondary-button"><GitBranch size={17}/>مدیریت شرکت و فرایندها</Link>}<Link href="/welcome" className="wf-text-button">معرفی سامانه</Link></div></div><div className="wf-welcome-visual"><div className="wf-visual-node"><Users size={22}/>پرسنل و نقش‌ها</div><span className="wf-visual-line"/><div className="wf-visual-node highlighted"><GitBranch size={22}/>فرم و گردش‌کار اختصاصی</div><span className="wf-visual-line"/><div className="wf-visual-node"><ShieldCheck size={22}/>تصمیم و پیگیری</div></div></section>}
       {error && <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-red-50 p-4 text-sm text-red-700"><span>{error}</span><button type="button" className="underline" onClick={() => {setError(""); void refresh();}}>تلاش دوباره</button></div>}
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-        <div><div className="mb-2 text-sm font-semibold text-blue-600">{inAdmin ? "مدیریت پرتال" : "نمای کلی سامانه"}</div><h1 className="text-2xl font-black sm:text-3xl">{inAdmin ? isSuper ? "پنل ابرادمین" : "مدیریت کاربران و دسترسی‌ها" : "داشبورد معاونت توسعه"}</h1><p className="mt-3 text-sm leading-7 text-slate-500">{inAdmin ? isSuper ? "زیرسیستم‌ها، مدیران و دسترسی گروه‌های سازمان را مدیریت کنید." : `حوزه مدیریت شما: ${SUBSYSTEMS.filter(s => session.adminSubsystemKeys.includes(s.key)).map(s => s.title).join("، ") || "تعیین نشده"}` : "دسترسی متمرکز به سرویس‌های فعال سازمان"}</p></div>
+        <div><div className="mb-2 text-sm font-semibold text-blue-600">{inAdmin ? "مدیریت پرتال" : "نمای کلی سامانه"}</div><h1 className="text-title font-extrabold">{inAdmin ? isSuper ? "پنل ابرادمین" : "مدیریت کاربران و دسترسی‌ها" : "داشبورد معاونت توسعه"}</h1><p className="mt-3 text-sm leading-7 text-slate-500">{inAdmin ? isSuper ? "زیرسیستم‌ها، مدیران و دسترسی گروه‌های سازمان را مدیریت کنید." : `حوزه مدیریت شما: ${SUBSYSTEMS.filter(s => session.adminSubsystemKeys.includes(s.key)).map(s => s.title).join("، ") || "تعیین نشده"}` : "دسترسی متمرکز به سرویس‌های فعال سازمان"}</p></div>
         {!inAdmin && meetingHref && <Link href={meetingHref} className="primary-button"><CalendarClock size={18}/>{groupTitle("meet")}</Link>}
+        {!inAdmin && smartScopes.some(scope=>enabled.some(m=>m.key===scope)&&canSeeSmart(session,scope))&&<Link href="/smart-inbox" className="primary-button"><Gauge size={18}/>کارتابل هوشمند</Link>}
         {(!inAdmin || panel === "subsystems") && <div className="flex gap-6 rounded-2xl border border-slate-100 bg-white px-5 py-3 text-sm shadow-sm"><div><div className="text-slate-400">فعال</div><b className="text-xl">{enabled.length.toLocaleString("fa-IR")}</b></div><div><div className="text-slate-400">کل زیرسیستم‌ها</div><b className="text-xl">{visible.length.toLocaleString("fa-IR")}</b></div></div>}
       </div>
-      {inAdmin && <nav aria-label="بخش‌های مدیریت" className="mb-7 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2">{tabs.map(tab => <button type="button" key={tab.id} aria-current={panel === tab.id ? "page" : undefined} onClick={() => setPanel(tab.id)} className={`rounded-xl px-4 py-2.5 text-[1.1rem] leading-[1.7] font-semibold ${panel === tab.id ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}>{tab.title}</button>)}</nav>}
+      {inAdmin && <nav aria-label="بخش‌های مدیریت" className="mb-7 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2">{tabs.map(tab => <button type="button" key={tab.id} aria-current={panel === tab.id ? "page" : undefined} onClick={() => setPanel(tab.id)} className={`rounded-xl px-4 py-2.5 text-menu leading-[1.7] font-semibold ${panel === tab.id ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}>{tab.title}</button>)}</nav>}
       {inAdmin && panel !== "subsystems" ? <AccessManagement key={`${session.role}:${session.adminSubsystemKeys.join(",")}`} tab={panel} session={session} onTabChange={setPanel}/> : <>
         {!loaded && !error && <p role="status" className="flex items-center gap-2 py-10 text-sm text-slate-500"><Loader2 size={18} className="animate-spin"/>در حال دریافت زیرسیستم‌ها…</p>}
         {inAdmin && isSuper ? <div className="grid gap-4">{mods.map(module => {
